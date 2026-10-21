@@ -1,0 +1,47 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Advice Slip API",
+    "version": "1.0"
+  },
+  "servers": [
+    {
+      "url": "https://api.adviceslip.com"
+    }
+  ],
+  "paths": {
+    "/advice": {
+      "get": {
+        "operationId": "getRandomAdvice",
+        "summary": "Get a random piece of advice",
+        "responses": {
+          "200": {
+            "description": "A random piece of advice",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["slip"],
+                  "properties": {
+                    "slip": {
+                      "type": "object",
+                      "required": ["id", "advice"],
+                      "properties": {
+                        "id": {
+                          "type": "integer"
+                        },
+                        "advice": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

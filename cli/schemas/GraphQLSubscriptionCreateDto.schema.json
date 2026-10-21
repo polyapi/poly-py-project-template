@@ -1,0 +1,99 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$ref": "#/components/schemas/GraphQLSubscriptionCreateDto",
+  "components": {
+    "schemas": {
+      "GraphQLSubscriptionCreateDto": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "context": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "ownerUserId": {
+            "type": "string"
+          },
+          "visibility": {
+            "enum": [
+              "ENVIRONMENT",
+              "TENANT"
+            ],
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "CUSTOM",
+              "OHIP"
+            ],
+            "type": "string"
+          },
+          "transportProtocol": {
+            "enum": [
+              "WS",
+              "HTTP"
+            ],
+            "type": "string"
+          },
+          "websocketUrl": {
+            "type": "string"
+          },
+          "query": {
+            "type": "string"
+          },
+          "paramsVariableId": {
+            "type": "string"
+          },
+          "paramsSfxId": {
+            "type": "string"
+          },
+          "paramsObject": {
+            "type": "object"
+          },
+          "functionId": {
+            "type": "string"
+          },
+          "functionParams": {
+            "type": "object",
+            "nullable": true
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "ohipOffsetSelection": {
+            "enum": [
+              "PROVIDER_HIGHEST",
+              "SPECIFIC"
+            ],
+            "type": "string"
+          },
+          "ohipOffset": {
+            "type": "string",
+            "maxLength": 256
+          },
+          "ohipMaintainOffset": {
+            "type": "boolean"
+          },
+          "eventInactivityThresholdMs": {
+            "type": "number",
+            "nullable": true,
+            "minimum": 60000,
+            "maximum": 86400000
+          }
+        },
+        "required": [
+          "name",
+          "context",
+          "type",
+          "websocketUrl",
+          "query",
+          "functionId"
+        ]
+      }
+    }
+  }
+}

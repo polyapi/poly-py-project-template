@@ -1,0 +1,528 @@
+import copy
+import json
+from unittest.mock import Mock
+
+import pytest
+
+from cli import flow, operations
+
+
+@pytest.fixture
+def config(tmp_path, monkeypatch):
+    monkeypatch.setenv("POLYAPI_NAMESPACE", "example")
+    monkeypatch.delenv("POLYAPI_NAMESPACES", raising=False)
+    return flow.build_config(
+        tmp_path, flow.CliArgs(False, False, False, False, (), None, False)
+    )
+
+
+def api_model():
+    return {
+        "functions": [
+            {
+                "name": "getRandomJoke",
+                "context": "example.demo",
+                "description": "Get a joke",
+                "arguments": [{"name": "hostUrl", "type": "string", "required": True}],
+                "source": {
+                    "auth": {"type": "noauth"},
+                    "body": {"mode": "empty"},
+                    "url": "{{hostUrl}}/random_joke",
+                    "method": "GET",
+                },
+            }
+        ],
+        "schemas": [],
+        "webhooks": [],
+    }
+
+
+def test_default_training_enriches_names_descriptions_and_arguments(config):
+    path = config.repo_root / "api.json"
+    original = api_model()
+    enriched = {
+        "name": "randomJoke",
+        "context": "outside.ignored",
+        "description": "Retrieve one random joke",
+        "arguments": [
+            {
+                "name": "hostUrl",
+                "type": "string",
+                "required": True,
+                "description": "Service URL",
+            }
+        ],
+    }
+    client = Mock()
+    client.request.side_effect = [original, enriched, {"id": "created"}]
+    operations.train_openapi(
+        client,
+        [(path, "example.demo", "spec")],
+        config,
+        dry_run=False,
+        generate_only=False,
+        overwrite_model=False,
+    )
+    calls = client.request.call_args_list
+    assert calls[1].args == ("POST", "/functions/api/description-generation")
+    assert calls[1].kwargs["payload"]["source"] == original["functions"][0]["source"]
+    saved = json.loads(path.with_suffix(".poly.json").read_text())
+    assert saved["functions"][0]["name"] == "randomJoke"
+    assert saved["functions"][0]["context"] == "example.demo"
+    assert saved["functions"][0]["arguments"] == enriched["arguments"]
+    assert calls[2].kwargs["payload"] == saved["functions"][0]
+
+
+def test_enrichment_failure_retains_metadata_and_never_prints_provider_body(
+    config, capsys
+):
+    client = Mock()
+    client.request.side_effect = flow.DeployError("sensitive provider response")
+    result = operations.enrich_model(client, api_model(), config, "example.demo")
+    assert result == api_model()
+    output = capsys.readouterr().err
+    assert "retaining translated metadata" in output
+    assert "sensitive" not in output
+
+
+def test_webhook_enrichment_preserves_payload_contract(config):
+    model = {
+        "webhooks": [
+            {
+                "name": "event",
+                "context": "example.demo",
+                "description": "Event",
+                "eventPayloadTypeSchema": {"type": "object"},
+            }
+        ]
+    }
+    client = Mock()
+    client.request.return_value = {
+        "name": "onEvent",
+        "description": "Receive an event",
+        "context": "foreign",
+    }
+    result = operations.enrich_model(client, model, config, "example.demo")
+    assert client.request.call_args.args == ("POST", "/webhooks/description-generation")
+    assert client.request.call_args.kwargs["payload"]["eventPayload"] == {
+        "type": "object"
+    }
+    assert result["webhooks"][0]["name"] == "onEvent"
+    assert result["webhooks"][0]["eventPayloadTypeSchema"] == {"type": "object"}
+
+
+def test_enrichment_collision_fails_before_training(config):
+    model = api_model()
+    model["functions"].append({**model["functions"][0], "name": "second"})
+    client = Mock()
+    client.request.side_effect = [
+        model,
+        {"name": "same", "description": "one", "arguments": []},
+        {"name": "same", "description": "two", "arguments": []},
+    ]
+    with pytest.raises(flow.DeployError, match="Duplicate"):
+        operations.train_openapi(
+            client,
+            [(config.repo_root / "api.json", "example.demo", "spec")],
+            config,
+            dry_run=False,
+            generate_only=False,
+            overwrite_model=False,
+        )
+    assert all(call.args[0] == "POST" for call in client.request.call_args_list)
+    assert not list(config.repo_root.glob("*.poly.json"))
+
+
+def test_explicit_rename_preserves_longer_names_and_updates_references():
+    assert operations.rename_model(
+        {"name": "foo", "url": "{{foo}}/foobar"}, [["foo", "bar"]]
+    ) == {"name": "bar", "url": "{{bar}}/foobar"}
+
+
+def test_missing_operation_names_can_be_generated(config):
+    model = api_model()
+    model["functions"][0].pop("name")
+    model["functions"].append(copy.deepcopy(model["functions"][0]))
+    client = Mock()
+    client.request.side_effect = [
+        {"name": "first", "description": "one", "arguments": []},
+        {"name": "second", "description": "two", "arguments": []},
+    ]
+    result = operations.enrich_model(client, model, config, "example.demo")
+    assert [item["name"] for item in result["functions"]] == ["first", "second"]
+
+
+def test_log_formatting_matches_ts_envelopes_and_supports_raw():
+    response = {
+        "response": {
+            "logs": [
+                {
+                    "timestamp": "2026-10-20",
+                    "level": "info",
+                    "message": "ready",
+                    "requestId": "test",
+                },
+                "plain line",
+            ],
+            "page": 2,
+        }
+    }
+    formatted = operations.format_logs(response)
+    assert "Logs (2)" in formatted
+    assert "2026-10-20 | INFO | ready" in formatted
+    assert '"requestId": "test"' in formatted
+    assert "plain line" in formatted
+    assert json.loads(operations.format_logs(response, raw=True)) == response
+    assert operations.format_logs({"logs": []}) == "No logs found."
+    args = operations.create_parser().parse_args(
+        ["logs", "id", "--logs-page", "2", "--logs-page-size", "25", "--raw"]
+    )
+    assert args.page == 2 and args.page_size == 25 and args.raw
+
+
+def test_optional_prompts_require_a_terminal(monkeypatch):
+    monkeypatch.setattr(operations.sys.stdin, "isatty", lambda: False)
+    with pytest.raises(flow.DeployError, match="required in non-interactive"):
+        operations.prompt_value(None, "Context")
+    assert operations.prompt_value("explicit", "Context") == "explicit"
+
+
+def test_interactive_training_prompts_for_source_and_context(config, monkeypatch):
+    source = config.repo_root / "spec.json"
+    source.write_text('{"openapi":"3.0.3","paths":{"/ping":{}}}')
+    monkeypatch.setattr(operations.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(operations.sys.stdout, "isatty", lambda: True)
+    answers = iter([str(source), "example.demo"])
+    monkeypatch.setattr("builtins.input", lambda _: next(answers))
+    monkeypatch.setattr(flow, "find_repo_root", lambda: config.repo_root)
+    monkeypatch.setattr(flow, "load_env", lambda _: object())
+    monkeypatch.setattr(flow, "build_config", lambda *_: config)
+    assert operations.main(["train-openapi", "--dry-run"]) == 0
+    assert not list(config.repo_root.glob("*.poly.json"))
+
+
+def test_training_translates_with_host_argument_then_uses_exact_upsert(config):
+    path = config.repo_root / "joke.json"
+    text = '{"openapi":"3.0.3","paths":{"/random_joke":{"get":{"operationId":"getRandomJoke"}}}}'
+    path.write_text(text)
+    client = Mock()
+    client.request.return_value = api_model()
+    specs = operations.load_specs(path, "example.demo", "example")
+    operations.train_openapi(
+        client,
+        specs,
+        config,
+        dry_run=False,
+        generate_only=False,
+        overwrite_model=False,
+        disable_ai=True,
+    )
+    calls = client.request.call_args_list
+    assert calls[0].args == ("POST", "/specification-input/oas")
+    assert calls[0].kwargs == {
+        "params": {"context": "example.demo", "hostUrlAsArgument": "hostUrl"},
+        "raw_body": text,
+        "headers": {"Content-Type": "text/plain"},
+    }
+    assert calls[1].args == ("PUT", "/functions/api")
+    assert calls[1].kwargs["payload"] == api_model()["functions"][0]
+    assert json.loads(path.with_suffix(".poly.json").read_text()) == api_model()
+
+
+def test_training_dry_run_has_no_remote_or_local_effects(config):
+    path = config.repo_root / "api.yaml"
+    path.write_text("openapi: 3.0.3\npaths:\n  /ping: {}\n")
+    specs = operations.load_specs(path, "example.{file}", "example")
+    assert specs[0][1] == "example.api"
+    client = Mock()
+    operations.train_openapi(
+        client,
+        specs,
+        config,
+        dry_run=True,
+        generate_only=False,
+        overwrite_model=False,
+        disable_ai=True,
+    )
+    client.request.assert_not_called()
+    assert not path.with_suffix(".poly.json").exists()
+
+
+def test_generation_only_saves_reviewable_model_without_resource_writes(config):
+    client = Mock()
+    client.request.return_value = api_model()
+    path = config.repo_root / "joke.json"
+    operations.train_openapi(
+        client,
+        [(path, "example.demo", "source")],
+        config,
+        dry_run=False,
+        generate_only=True,
+        overwrite_model=False,
+        disable_ai=True,
+    )
+    client.request.assert_called_once()
+    assert path.with_suffix(".poly.json").is_file()
+    with pytest.raises(flow.DeployError, match="already exists"):
+        operations.train_openapi(
+            client,
+            [(path, "example.demo", "source")],
+            config,
+            dry_run=False,
+            generate_only=True,
+            overwrite_model=False,
+            disable_ai=True,
+        )
+    assert client.request.call_count == 1
+
+
+def test_invalid_translation_stops_before_any_training(config):
+    model = api_model()
+    model["functions"][0]["context"] = "foreign.demo"
+    client = Mock()
+    client.request.return_value = model
+    with pytest.raises(flow.DeployError, match="namespace|NAMESPACE"):
+        operations.train_openapi(
+            client,
+            [(config.repo_root / "api.json", "example.demo", "source")],
+            config,
+            dry_run=False,
+            generate_only=False,
+            overwrite_model=False,
+            disable_ai=True,
+        )
+    assert client.request.call_count == 1
+    assert not list(config.repo_root.glob("*.poly.json"))
+
+
+def test_schema_dependencies_precede_functions_and_cycles_fail_before_writes(config):
+    model = api_model()
+    model["schemas"] = [
+        {
+            "name": "Parent",
+            "context": "example.demo",
+            "definition": {
+                "type": "object",
+                "properties": {"child": {"x-poly-ref": {"path": "example.demo.Child"}}},
+            },
+        },
+        {"name": "Child", "context": "example.demo", "definition": {"type": "string"}},
+    ]
+    validated = operations.validate_model(model, config)
+    client = Mock()
+    operations.train_model(client, validated, dry_run=False)
+    assert [
+        (call.args[1], call.kwargs["payload"]["name"])
+        for call in client.request.call_args_list
+    ] == [
+        ("/schemas", "Child"),
+        ("/schemas", "Parent"),
+        ("/functions/api", "getRandomJoke"),
+    ]
+    model["schemas"][1]["definition"] = {"x-poly-ref": {"path": "example.demo.Parent"}}
+    with pytest.raises(flow.DeployError, match="cycle"):
+        operations.validate_model(model, config)
+
+
+def test_cross_file_duplicate_model_identities_fail_before_upserts(config):
+    client = Mock()
+    client.request.return_value = api_model()
+    specs = [
+        (config.repo_root / f"{index}.json", "example.demo", "source")
+        for index in range(2)
+    ]
+    with pytest.raises(flow.DeployError, match="Duplicate"):
+        operations.train_openapi(
+            client,
+            specs,
+            config,
+            dry_run=False,
+            generate_only=False,
+            overwrite_model=False,
+            disable_ai=True,
+        )
+    assert all(call.args[0] == "POST" for call in client.request.call_args_list)
+
+
+def test_bad_openapi_input_and_foreign_context_are_rejected(config):
+    path = config.repo_root / "api.json"
+    path.write_text('{"openapi":"3.0.3","paths":{}}')
+    with pytest.raises(flow.DeployError, match="no paths"):
+        operations.load_specs(path, "example.demo", "example")
+    path.write_text('{"swagger":"2.0","paths":{"/ping":{}}}')
+    with pytest.raises(flow.DeployError, match="context"):
+        operations.load_specs(path, "foreign.demo", "example")
+
+
+def test_delete_plan_is_exact_context_and_requires_all_references_owned(config):
+    data = {
+        "/functions/server": [
+            {"id": "owned", "context": "example.demo"},
+            {"id": "foreign", "context": "other.demo"},
+        ],
+        "/variables": [
+            {"id": "one", "context": "example.demo"},
+            {"id": "child", "context": "example.demo.child"},
+            {"id": "foreign", "context": "example.demonstration"},
+        ],
+        "/jobs": [{"id": "good"}, {"id": "mixed"}, {"id": "unknown"}],
+        "/jobs/good": {"functions": [{"id": "owned"}]},
+        "/jobs/mixed": {"functions": [{"id": "owned"}, {"id": "foreign"}]},
+        "/jobs/unknown": {"functions": [{"id": "owned"}, {"id": "unresolved"}]},
+    }
+    client = Mock()
+    client.request.side_effect = lambda method, path, **kwargs: copy.deepcopy(
+        data[path]
+    )
+    plan = operations.deletion_plan(
+        client, ["variables", "jobs"], "example.demo", include_children=False
+    )
+    assert [endpoint for endpoint, _ in plan] == ["/jobs/good", "/variables/one"]
+    assert all(call.args[0] == "GET" for call in client.request.call_args_list)
+    plan = operations.deletion_plan(
+        client, ["variables"], "example.demo", include_children=True
+    )
+    assert {path for path, _ in plan} == {"/variables/one", "/variables/child"}
+
+
+@pytest.mark.parametrize(
+    "apply,answer", [(False, "DELETE"), (True, "delete"), (True, "no")]
+)
+def test_delete_preview_and_rejected_confirmation_never_write(
+    monkeypatch, apply, answer
+):
+    monkeypatch.setattr(operations.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(operations.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda _: answer)
+    client = Mock()
+    plan = [("/variables/id", {"name": "value", "context": "example.demo"})]
+    if apply:
+        with pytest.raises(flow.DeployError, match="cancelled"):
+            operations.delete_content(client, plan, apply=apply)
+    else:
+        operations.delete_content(client, plan, apply=apply)
+    client.request.assert_not_called()
+
+
+def test_delete_requires_readback_and_stops_if_resource_remains(monkeypatch):
+    monkeypatch.setattr(operations.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(operations.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda _: "DELETE")
+    plan = [("/variables/one", {"name": "one"}), ("/variables/two", {"name": "two"})]
+    client = Mock()
+    client.request.side_effect = [None, {"id": "one"}]
+    with pytest.raises(flow.DeployError, match="could not be verified"):
+        operations.delete_content(client, plan, apply=True)
+    assert len(client.request.call_args_list) == 2
+    client.reset_mock(side_effect=True)
+    client.request.side_effect = [
+        None,
+        flow.ApiError("GET", "/variables/one", 404),
+        None,
+        flow.ApiError("GET", "/variables/two", 404),
+    ]
+    operations.delete_content(client, plan, apply=True)
+    assert [call.args[0] for call in client.request.call_args_list] == [
+        "DELETE",
+        "GET",
+        "DELETE",
+        "GET",
+    ]
+
+
+def test_logs_encode_id_and_preserve_query_parameters():
+    client = Mock()
+    operations.function_logs(
+        client, "id/segment", page=2, page_size=30, keyword="failure", limit=20
+    )
+    client.request.assert_called_once_with(
+        "GET",
+        "/functions/server/id%2Fsegment/logs",
+        params={"logsPage": 2, "logsPageSize": 30, "keyword": "failure", "limit": 20},
+    )
+
+
+def test_raw_transport_applies_otp_and_refuses_redirects():
+    client = flow.PolyApiClient(
+        "https://example.invalid", "synthetic-key", otp_manager=Mock()
+    )
+    client.otp_manager.delete_headers.return_value = {"x-otp": "synthetic-otp"}
+    client.session = Mock()
+    client.session.request.return_value = Mock(status_code=204, content=b"")
+    client.request(
+        "POST",
+        "/specification-input/oas",
+        raw_body="specification",
+        headers={"Content-Type": "text/plain"},
+    )
+    options = client.session.request.call_args.kwargs
+    assert options["data"] == "specification" and "json" not in options
+    assert options["headers"] == {
+        "x-otp": "synthetic-otp",
+        "Content-Type": "text/plain",
+    }
+    assert options["allow_redirects"] is False
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["train-openapi", "input.json", "--context", "example.demo"],
+        [
+            "delete-content",
+            "--context",
+            "example.demo",
+            "--types",
+            "variables",
+            "--apply",
+        ],
+        ["logs", "function-id"],
+    ],
+)
+def test_every_remote_command_verifies_target_before_resource_requests(
+    config, monkeypatch, argv
+):
+    monkeypatch.setattr(flow, "find_repo_root", lambda: config.repo_root)
+    monkeypatch.setattr(flow, "load_env", lambda *_: object())
+    monkeypatch.setattr(flow, "build_config", lambda *_: config)
+    monkeypatch.setattr(flow, "get_target_env_id", lambda *_: "selected-target")
+    monkeypatch.setattr(flow, "build_deployment_preflight", lambda *_: object())
+    monkeypatch.setattr(flow, "print_deployment_visibility", lambda *_: None)
+    monkeypatch.setattr(flow, "maybe_confirm_branch_env_file_match", lambda *_: None)
+    safeguards = Mock()
+    monkeypatch.setattr(flow, "enforce_production_safeguards", safeguards)
+    monkeypatch.setattr(flow, "get_execution_api_key", lambda: None)
+    monkeypatch.setattr(
+        flow,
+        "get_api_key_and_url",
+        lambda: ("synthetic-key", "https://example.invalid"),
+    )
+    monkeypatch.setattr(operations, "load_specs", lambda *_: [])
+    client = Mock()
+    monkeypatch.setattr(flow, "PolyApiClient", lambda *args, **kwargs: client)
+    verify = Mock(side_effect=flow.DeployError("Target mismatch"))
+    monkeypatch.setattr(flow, "enforce_target_environment", verify)
+    with pytest.raises(flow.DeployError, match="Target mismatch"):
+        operations.main(argv)
+    safeguards.assert_called_once()
+    verify.assert_called_once()
+    client.request.assert_not_called()
+
+
+def test_same_stem_specs_cannot_overwrite_each_others_models(config):
+    specs = [
+        (config.repo_root / f"api.{extension}", "example.demo", "source")
+        for extension in ("json", "yaml")
+    ]
+    client = Mock()
+    with pytest.raises(flow.DeployError, match="same model file"):
+        operations.train_openapi(
+            client,
+            specs,
+            config,
+            dry_run=False,
+            generate_only=False,
+            overwrite_model=False,
+            disable_ai=True,
+        )
+    client.request.assert_not_called()

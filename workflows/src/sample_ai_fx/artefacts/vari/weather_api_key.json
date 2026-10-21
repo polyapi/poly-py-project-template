@@ -1,0 +1,8 @@
+{
+  "name": "weather_api_key",
+  "context": "example.sample_ai_fx",
+  "description": "AccuWeather API key injected into the uplifting_weather tools.",
+  "instruction": "After deployment, set this secret to your AccuWeather API key in PolyAPI Canopy. Never add the key to this file.",
+  "secrecy": "SECRET",
+  "visibility": "ENVIRONMENT"
+}

@@ -1,0 +1,190 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$ref": "#/components/schemas/CreateServerCustomFunctionDto",
+  "components": {
+    "schemas": {
+      "CreateServerCustomFunctionDto": {
+        "type": "object",
+        "properties": {
+          "logsEnabled": {
+            "type": "boolean"
+          },
+          "serverSideAsync": {
+            "type": "boolean"
+          },
+          "generateContexts": {
+            "description": "* Server Function Only!\n* This is a list of contexts that will be generated for this function (with `npx poly generate` or your language's equivalent).\n* If not provided, all contexts will be generated.\n* The sole benefit of providing this is to speed up function add / execution time.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "executionApiKey": {
+            "type": "string"
+          },
+          "cachePolyLibrary": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "nullable": true
+          },
+          "context": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          },
+          "sourceCode": {
+            "type": "string"
+          },
+          "language": {
+            "type": "string"
+          },
+          "visibility": {
+            "enum": [
+              "ENVIRONMENT",
+              "TENANT",
+              "PUBLIC"
+            ],
+            "type": "string"
+          },
+          "typeSchemas": {
+            "type": "object"
+          },
+          "returnType": {
+            "type": "string"
+          },
+          "returnTypeSchema": {
+            "type": "object"
+          },
+          "arguments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FunctionArgument"
+            }
+          },
+          "requirements": {
+            "nullable": true,
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "internalDependencies": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "nullable": true
+          },
+          "externalDependencies": {
+            "type": "object"
+          },
+          "ownerUserId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "nullable": true
+          }
+        },
+        "required": [
+          "name",
+          "code"
+        ]
+      },
+      "FunctionArgument": {
+        "type": "object",
+        "properties": {
+          "typeSchema": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "key": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "secure": {
+            "type": "boolean"
+          },
+          "type": {
+            "type": "string"
+          },
+          "typeObject": {
+            "type": "object"
+          },
+          "payload": {
+            "type": "boolean"
+          },
+          "variable": {
+            "type": "string"
+          },
+          "location": {
+            "type": "object"
+          },
+          "removeIfNotPresentOnExecute": {
+            "type": "boolean"
+          },
+          "serialization": {
+            "$ref": "#/components/schemas/ArgumentSerializationDto"
+          },
+          "unresolvedPolySchemaRefs": {
+            "description": "If there are some missing poly schemas in argument `typeSchema`, they will be listed here.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SchemaRef"
+            }
+          }
+        },
+        "required": [
+          "key",
+          "name",
+          "type"
+        ]
+      },
+      "ArgumentSerializationDto": {
+        "type": "object",
+        "properties": {
+          "style": {
+            "type": "string"
+          },
+          "explode": {
+            "type": "boolean"
+          }
+        }
+      },
+      "SchemaRef": {
+        "type": "object",
+        "properties": {
+          "publicNamespace": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ]
+      }
+    }
+  }
+}

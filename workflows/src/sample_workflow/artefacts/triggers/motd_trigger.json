@@ -1,0 +1,6 @@
+{
+  "name": "example_motd",
+  "source": {"webhookName": "motd", "webhookContext": "example.sample_workflow"},
+  "destination": {"functionName": "motd_server", "functionContext": "example.sample_workflow"},
+  "waitForResponse": true
+}

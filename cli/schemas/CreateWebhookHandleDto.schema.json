@@ -1,0 +1,139 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$ref": "#/components/schemas/CreateWebhookHandleDto",
+  "components": {
+    "schemas": {
+      "CreateWebhookHandleDto": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "context": {
+            "type": "string"
+          },
+          "eventPayload": {
+            "type": "object",
+            "description": "It is required if there is not `eventPayloadTypeSchema` defined."
+          },
+          "eventPayloadTypeSchema": {
+            "type": "object",
+            "description": "It is required if there is not `eventPayload` defined."
+          },
+          "description": {
+            "type": "string"
+          },
+          "visibility": {
+            "enum": [
+              "ENVIRONMENT",
+              "TENANT",
+              "PUBLIC"
+            ],
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "ALPHA",
+              "BETA",
+              "STABLE",
+              "DEPRECATED",
+              "DISABLED"
+            ],
+            "type": "string"
+          },
+          "responsePayload": {
+            "type": "object"
+          },
+          "responseHeaders": {
+            "type": "object",
+            "description": "A plain object"
+          },
+          "responseStatus": {
+            "type": "number",
+            "minimum": 200,
+            "maximum": 599
+          },
+          "slug": {
+            "type": "string",
+            "nullable": true,
+            "description": "Alphanumeric characters as well as \"-\", \"_\"",
+            "example": "foo",
+            "pattern": "(?:\\w|-)+"
+          },
+          "subpath": {
+            "type": "string"
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "GET",
+              "POST",
+              "PUT",
+              "PATCH",
+              "DELETE",
+              "HEAD"
+            ]
+          },
+          "requirePolyApiKey": {
+            "type": "boolean"
+          },
+          "securityFunctions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WebhookSecurityFunction"
+            }
+          },
+          "xmlParserOptions": {
+            "$ref": "#/components/schemas/WebhookHandleXmlParserOptions"
+          },
+          "ownerUserId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "description"
+        ]
+      },
+      "WebhookHandleXmlParserOptions": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "If is enabled, it will send webhook xml request body as a json object to server functions and webhook listeners, otherwise it will send it as string.\nDefault: `true`."
+          },
+          "explicitArray": {
+            "type": "boolean",
+            "description": "Always put child nodes in an array if true; otherwise an array is created only if there is more than one.\nDefault: `false`."
+          },
+          "trim": {
+            "type": "boolean",
+            "description": "Trim the whitespace at the beginning and end of text nodes.\nDefault: `false`."
+          },
+          "normalizeTags": {
+            "type": "boolean",
+            "description": "Normalize all tag names to lowercase.\nDefault: `false`."
+          },
+          "includeRawXml": {
+            "type": "boolean",
+            "description": "Include the exact decoded XML request body at top-level `rawXml` alongside the parsed payload.\nDefault: `false`."
+          }
+        }
+      },
+      "WebhookSecurityFunction": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      }
+    }
+  }
+}

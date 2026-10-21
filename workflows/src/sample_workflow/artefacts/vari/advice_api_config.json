@@ -1,0 +1,13 @@
+{
+  "name": "advice_api_config",
+  "context": "example.sample_workflow",
+  "description": "OBSCURED configuration is readable by code and masked in Canopy.",
+  "visibility": "ENVIRONMENT",
+  "secrecy": "OBSCURED",
+  "value": {"hostUrl": "https://api.adviceslip.com"},
+  "schema": {
+    "type": "object",
+    "required": ["hostUrl"],
+    "properties": {"hostUrl": {"type": "string"}}
+  }
+}

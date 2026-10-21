@@ -1,0 +1,6 @@
+{
+  "name": "example_global_error_alerts",
+  "errorHandler": {"path": "example", "applicationIds": [], "userIds": [], "functionIds": []},
+  "destination": {"functionName": "error_alerts", "functionContext": "example.diagnostics.services"},
+  "enabled": true
+}

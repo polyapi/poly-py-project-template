@@ -1,0 +1,25 @@
+{
+  "name": "motd",
+  "context": "example.sample_workflow",
+  "description": "Receive a name and mood, then return a message of the day.",
+  "visibility": "ENVIRONMENT",
+  "method": "POST",
+  "subpath": "motd",
+  "slug": "example-motd",
+  "requirePolyApiKey": true,
+  "eventPayloadTypeSchema": {
+    "type": "object",
+    "required": ["name", "mood"],
+    "properties": {
+      "name": {"type": "string", "minLength": 1},
+      "mood": {"type": "string", "enum": ["funny", "wise"]}
+    },
+    "additionalProperties": false
+  },
+  "securityFunctions": [
+    {
+      "id": "{{example.sample_workflow.validate_motd_payload}}",
+      "message": "Provide a non-empty name and a mood of funny or wise."
+    }
+  ]
+}

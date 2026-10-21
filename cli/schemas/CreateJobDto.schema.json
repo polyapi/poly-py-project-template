@@ -1,0 +1,153 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$ref": "#/components/schemas/CreateJobDto",
+  "components": {
+    "schemas": {
+      "CreateFunctionJob": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "eventPayload": {
+            "type": "object"
+          },
+          "headersPayload": {
+            "type": "object"
+          },
+          "paramsPayload": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "CreateJobDto": {
+        "type": "object",
+        "properties": {
+          "schedule": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Periodical"
+              },
+              {
+                "$ref": "#/components/schemas/Interval"
+              },
+              {
+                "$ref": "#/components/schemas/OnTime"
+              }
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "functions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CreateFunctionJob"
+            }
+          },
+          "executionType": {
+            "enum": [
+              "sequential",
+              "parallel"
+            ],
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "ownerUserId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "functions",
+          "executionType",
+          "enabled"
+        ]
+      },
+      "Interval": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "enum": [
+              "interval"
+            ],
+            "type": "string"
+          },
+          "acceptableDelayTime": {
+            "type": "number",
+            "nullable": true,
+            "minimum": 0,
+            "description": "Acceptable Delay Time in minutes. Whole integers, minimum 0.",
+            "example": 30
+          },
+          "value": {
+            "type": "number",
+            "description": "The interval in minutes."
+          }
+        },
+        "required": [
+          "type",
+          "value"
+        ]
+      },
+      "OnTime": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "enum": [
+              "on_time"
+            ],
+            "type": "string"
+          },
+          "acceptableDelayTime": {
+            "type": "number",
+            "nullable": true,
+            "minimum": 0,
+            "description": "Acceptable Delay Time in minutes. Whole integers, minimum 0.",
+            "example": 30
+          },
+          "value": {
+            "format": "date-time",
+            "type": "string",
+            "description": "Valid ISO 8601 date string, you can create your dates with this tool: https://www.timestamp-converter.com/"
+          }
+        },
+        "required": [
+          "type",
+          "value"
+        ]
+      },
+      "Periodical": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "enum": [
+              "periodical"
+            ],
+            "type": "string"
+          },
+          "acceptableDelayTime": {
+            "type": "number",
+            "nullable": true,
+            "minimum": 0,
+            "description": "Acceptable Delay Time in minutes. Whole integers, minimum 0.",
+            "example": 30
+          },
+          "value": {
+            "type": "string",
+            "description": "You can try your cron expressions here: https://crontab.guru"
+          }
+        },
+        "required": [
+          "type",
+          "value"
+        ]
+      }
+    }
+  }
+}

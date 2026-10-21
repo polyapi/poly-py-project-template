@@ -1,0 +1,117 @@
+{
+  "name": "uplifting_weather",
+  "context": "example.sample_ai_fx",
+  "description": "Returns accurate, practical, and encouraging weather guidance tailored to an optional activity.",
+  "visibility": "ENVIRONMENT",
+  "state": "ALPHA",
+  "enabled": true,
+  "type": "TEXT",
+  "provider": "openai",
+  "apiType": "responses",
+  "model": "gpt-5.5",
+  "arguments": [
+    {
+      "key": "location",
+      "type": "string",
+      "required": true,
+      "description": "A village, city, region, country, or other location description."
+    },
+    {
+      "key": "activity",
+      "type": "string",
+      "required": false,
+      "description": "An optional activity for which the weather is relevant."
+    }
+  ],
+  "systemPrompt": "Use the weather tools for all weather facts. Resolve the requested location, retrieve current conditions, and provide concise practical guidance tailored to the activity when supplied. Preserve safety warnings, avoid invented facts, and close with a brief sincere uplifting message.",
+  "inputTemplate": "Provide weather guidance for {{location}} in the context of {{activity}} when supplied.",
+  "clientPromptEnabled": false,
+  "clientPromptRequired": false,
+  "clientPromptArgName": "",
+  "toolFunctions": [
+    {
+      "functionName": "search",
+      "functionContext": "accuWeather.locations",
+      "argumentConfig": [
+        {
+          "key": "locationText",
+          "source": "ai"
+        },
+        {
+          "key": "apiKey",
+          "source": "variable",
+          "variableName": "weather_api_key",
+          "variableContext": "example.sample_ai_fx"
+        }
+      ]
+    },
+    {
+      "functionName": "getByLocationKey",
+      "functionContext": "accuWeather.currentConditions",
+      "argumentConfig": [
+        {
+          "key": "locationId",
+          "source": "ai"
+        },
+        {
+          "key": "apiKey",
+          "source": "variable",
+          "variableName": "weather_api_key",
+          "variableContext": "example.sample_ai_fx"
+        }
+      ]
+    }
+  ],
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "location",
+      "currentWeather",
+      "description",
+      "recommendedItems",
+      "upliftingMessage"
+    ],
+    "properties": {
+      "location": {
+        "type": "string"
+      },
+      "currentWeather": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "condition",
+          "temperature",
+          "unit"
+        ],
+        "properties": {
+          "condition": {
+            "type": "string"
+          },
+          "temperature": {
+            "type": "number"
+          },
+          "unit": {
+            "type": "string",
+            "enum": [
+              "C",
+              "F"
+            ]
+          }
+        }
+      },
+      "description": {
+        "type": "string"
+      },
+      "recommendedItems": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "upliftingMessage": {
+        "type": "string"
+      }
+    }
+  }
+}

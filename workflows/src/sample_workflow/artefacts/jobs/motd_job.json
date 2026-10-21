@@ -1,0 +1,15 @@
+{
+  "name": "example_motd",
+  "executionType": "sequential",
+  "enabled": false,
+  "schedule": {"type": "interval", "value": 60},
+  "functions": [
+    {
+      "functionName": "motd_server",
+      "functionContext": "example.sample_workflow",
+      "eventPayload": {"name": "Scheduler", "mood": "wise"},
+      "headersPayload": {},
+      "paramsPayload": {}
+    }
+  ]
+}

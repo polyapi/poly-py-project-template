@@ -1,0 +1,682 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$ref": "#/components/schemas/CreateApiFunctionDto",
+  "components": {
+    "schemas": {
+      "ApiKeyAuthSource": {
+        "type": "object",
+        "properties": {
+          "apikey": {
+            "uniqueItems": true,
+            "minItems": 3,
+            "maxItems": 3,
+            "type": "array",
+            "description": "Items uniqueness is determined by \"key\" property.",
+            "items": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/ApiKeyInEntrySource"
+                },
+                {
+                  "$ref": "#/components/schemas/KeyValueApiKeyEntrySource"
+                }
+              ]
+            },
+            "minimum": 3,
+            "maximum": 3
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "apikey"
+            ]
+          }
+        },
+        "required": [
+          "apikey",
+          "type"
+        ]
+      },
+      "ApiKeyInEntrySource": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "enum": [
+              "in"
+            ]
+          },
+          "value": {
+            "type": "string",
+            "enum": [
+              "header",
+              "query"
+            ]
+          }
+        },
+        "required": [
+          "key",
+          "value"
+        ]
+      },
+      "ArgumentSerializationDto": {
+        "type": "object",
+        "properties": {
+          "style": {
+            "type": "string"
+          },
+          "explode": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ArgumentsMetadataDto": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "secure": {
+            "type": "boolean"
+          },
+          "type": {
+            "type": "string"
+          },
+          "typeSchema": {
+            "type": "object"
+          },
+          "typeObject": {
+            "type": "object"
+          },
+          "payload": {
+            "type": "boolean"
+          },
+          "variable": {
+            "type": "string",
+            "nullable": true
+          },
+          "removeIfNotPresentOnExecute": {
+            "type": "boolean"
+          },
+          "serialization": {
+            "$ref": "#/components/schemas/ArgumentSerializationDto"
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "Awsv4AccessKeyEntry": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string",
+            "enum": [
+              "accessKey"
+            ]
+          }
+        },
+        "required": [
+          "value",
+          "key"
+        ]
+      },
+      "Awsv4AddToQueryEntry": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "boolean"
+          },
+          "key": {
+            "type": "string",
+            "enum": [
+              "addAuthDataToQuery"
+            ]
+          }
+        },
+        "required": [
+          "value",
+          "key"
+        ]
+      },
+      "Awsv4AuthSource": {
+        "type": "object",
+        "properties": {
+          "awsv4": {
+            "uniqueItems": true,
+            "minItems": 2,
+            "type": "array",
+            "description": "Items uniqueness is determined by \"key\" property.",
+            "items": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/Awsv4ServiceEntry"
+                },
+                {
+                  "$ref": "#/components/schemas/Awsv4RegionEntry"
+                },
+                {
+                  "$ref": "#/components/schemas/Awsv4AccessKeyEntry"
+                },
+                {
+                  "$ref": "#/components/schemas/Awsv4SecretKeyEntry"
+                },
+                {
+                  "$ref": "#/components/schemas/Awsv4SessionTokenEntry"
+                },
+                {
+                  "$ref": "#/components/schemas/Awsv4AddToQueryEntry"
+                }
+              ]
+            },
+            "minimum": 3
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "awsv4"
+            ]
+          }
+        },
+        "required": [
+          "awsv4",
+          "type"
+        ]
+      },
+      "Awsv4RegionEntry": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string",
+            "enum": [
+              "region"
+            ]
+          }
+        },
+        "required": [
+          "value",
+          "key"
+        ]
+      },
+      "Awsv4SecretKeyEntry": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string",
+            "enum": [
+              "secretKey"
+            ]
+          }
+        },
+        "required": [
+          "value",
+          "key"
+        ]
+      },
+      "Awsv4ServiceEntry": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string",
+            "enum": [
+              "service"
+            ]
+          }
+        },
+        "required": [
+          "value",
+          "key"
+        ]
+      },
+      "Awsv4SessionTokenEntry": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string",
+            "enum": [
+              "sessionToken"
+            ]
+          }
+        },
+        "required": [
+          "value",
+          "key"
+        ]
+      },
+      "BasicAuthSource": {
+        "type": "object",
+        "properties": {
+          "basic": {
+            "type": "array",
+            "uniqueItems": true,
+            "minItems": 2,
+            "maxItems": 2,
+            "items": {
+              "$ref": "#/components/schemas/BasicAuthSourceEntries"
+            },
+            "minimum": 2,
+            "maximum": 2
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "basic"
+            ]
+          }
+        },
+        "required": [
+          "basic",
+          "type"
+        ]
+      },
+      "BasicAuthSourceEntries": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string",
+            "enum": [
+              "username",
+              "password"
+            ]
+          }
+        },
+        "required": [
+          "value",
+          "key"
+        ]
+      },
+      "BearerAuthSource": {
+        "type": "object",
+        "properties": {
+          "bearer": {
+            "minItems": 1,
+            "maxItems": 1,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BearerAuthSourceEntry"
+            }
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "bearer"
+            ]
+          }
+        },
+        "required": [
+          "bearer",
+          "type"
+        ]
+      },
+      "BearerAuthSourceEntry": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "enum": [
+              "token"
+            ]
+          },
+          "value": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "value"
+        ]
+      },
+      "CreateApiFunctionDto": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "$ref": "#/components/schemas/CreateSourceDto"
+          },
+          "name": {
+            "type": "string"
+          },
+          "context": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "arguments": {
+            "uniqueItems": true,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ArgumentsMetadataDto"
+            }
+          },
+          "visibility": {
+            "enum": [
+              "ENVIRONMENT",
+              "TENANT",
+              "PUBLIC"
+            ],
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "ALPHA",
+              "BETA",
+              "STABLE",
+              "DEPRECATED",
+              "DISABLED"
+            ],
+            "type": "string"
+          },
+          "enabledRedirect": {
+            "type": "boolean"
+          },
+          "returnType": {
+            "type": "string"
+          },
+          "returnTypeSchema": {
+            "type": "object"
+          },
+          "otherReturnTypes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReturnTypeDto"
+            }
+          },
+          "destinationEnvironmentId": {
+            "type": "string"
+          },
+          "ownerUserId": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "source",
+          "name",
+          "context",
+          "description"
+        ]
+      },
+      "CreateSourceDto": {
+        "type": "object",
+        "properties": {
+          "auth": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/BasicAuthSource"
+              },
+              {
+                "$ref": "#/components/schemas/BearerAuthSource"
+              },
+              {
+                "$ref": "#/components/schemas/ApiKeyAuthSource"
+              },
+              {
+                "$ref": "#/components/schemas/Awsv4AuthSource"
+              },
+              {
+                "$ref": "#/components/schemas/NoAuthSource"
+              }
+            ]
+          },
+          "body": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/UrlEncodedBodySource"
+              },
+              {
+                "$ref": "#/components/schemas/FormDataBodySource"
+              },
+              {
+                "$ref": "#/components/schemas/RawBodySource"
+              },
+              {
+                "$ref": "#/components/schemas/EmptyBodySource"
+              },
+              {
+                "$ref": "#/components/schemas/FileBodySource"
+              }
+            ]
+          },
+          "url": {
+            "type": "string"
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "GET",
+              "POST",
+              "PUT",
+              "PATCH",
+              "DELETE",
+              "HEAD"
+            ]
+          },
+          "headers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EntrySource"
+            }
+          }
+        },
+        "required": [
+          "auth",
+          "body",
+          "url",
+          "method"
+        ]
+      },
+      "EmptyBodySource": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "empty"
+            ]
+          }
+        },
+        "required": [
+          "mode"
+        ]
+      },
+      "EntrySource": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "value"
+        ]
+      },
+      "FileBodySource": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "file"
+            ]
+          }
+        },
+        "required": [
+          "mode"
+        ]
+      },
+      "FormDataBodySource": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "formdata"
+            ]
+          },
+          "formdata": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FormDataEntrySource"
+            }
+          }
+        },
+        "required": [
+          "mode",
+          "formdata"
+        ]
+      },
+      "FormDataEntrySource": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "text",
+              "file"
+            ]
+          }
+        },
+        "required": [
+          "key",
+          "value",
+          "type"
+        ]
+      },
+      "KeyValueApiKeyEntrySource": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string",
+            "enum": [
+              "key"
+            ]
+          }
+        },
+        "required": [
+          "value",
+          "key"
+        ]
+      },
+      "NoAuthSource": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "noauth"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "RawBodySource": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "raw"
+            ]
+          },
+          "raw": {
+            "type": "string"
+          },
+          "language": {
+            "type": "string",
+            "enum": [
+              "html",
+              "xml",
+              "text",
+              "json",
+              "javascript"
+            ]
+          }
+        },
+        "required": [
+          "mode",
+          "raw",
+          "language"
+        ]
+      },
+      "ReturnTypeDto": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "schema": {
+            "type": "object"
+          },
+          "statusCode": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "type",
+          "schema",
+          "statusCode"
+        ]
+      },
+      "UrlEncodedBodySource": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "urlencoded"
+            ]
+          },
+          "urlencoded": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EntrySource"
+            }
+          }
+        },
+        "required": [
+          "mode",
+          "urlencoded"
+        ]
+      }
+    }
+  }
+}

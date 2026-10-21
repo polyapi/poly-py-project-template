@@ -1,0 +1,138 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string"
+    },
+    "description": {
+      "type": "string"
+    },
+    "apiType": {
+      "type": "string"
+    },
+    "model": {
+      "type": "string"
+    },
+    "systemPrompt": {
+      "type": "string"
+    },
+    "systemPromptVariableId": {
+      "type": "string"
+    },
+    "inputTemplate": {
+      "type": "string"
+    },
+    "arguments": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "returnType": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "returnTypeSchema": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "outputSchema": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "toolFunctions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "argumentConfig": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "key",
+                "source"
+              ],
+              "properties": {
+                "key": {
+                  "type": "string"
+                },
+                "source": {
+                  "enum": [
+                    "ai",
+                    "hardcoded",
+                    "argument",
+                    "variable"
+                  ]
+                },
+                "value": true,
+                "argumentKey": {
+                  "type": "string"
+                },
+                "variableId": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "clientPromptEnabled": {
+      "type": "boolean"
+    },
+    "clientPromptRequired": {
+      "type": "boolean"
+    },
+    "clientPromptArgName": {
+      "type": "string"
+    },
+    "visibility": {
+      "type": "string"
+    },
+    "state": {
+      "type": "string"
+    },
+    "enabled": {
+      "type": "boolean"
+    },
+    "type": {
+      "type": "string"
+    },
+    "voiceConnectProvider": {
+      "type": "string"
+    },
+    "voiceOutput": {
+      "enum": [
+        "ALLOY",
+        "ASH",
+        "BALLAD",
+        "CORAL",
+        "ECHO",
+        "SAGE",
+        "SHIMMER",
+        "VERSE"
+      ]
+    },
+    "voiceInitialMessage": {
+      "type": "string",
+      "maxLength": 500
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,47 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Official Joke API",
+    "version": "1.0"
+  },
+  "servers": [
+    {
+      "url": "https://official-joke-api.appspot.com"
+    }
+  ],
+  "paths": {
+    "/random_joke": {
+      "get": {
+        "operationId": "getRandomJoke",
+        "summary": "Get a random joke",
+        "responses": {
+          "200": {
+            "description": "A random joke",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["id", "type", "setup", "punchline"],
+                  "properties": {
+                    "id": {
+                      "type": "integer"
+                    },
+                    "type": {
+                      "type": "string"
+                    },
+                    "setup": {
+                      "type": "string"
+                    },
+                    "punchline": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

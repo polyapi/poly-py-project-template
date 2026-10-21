@@ -1,0 +1,38 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$ref": "#/components/schemas/CreateSchemaDto",
+  "components": {
+    "schemas": {
+      "CreateSchemaDto": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "context": {
+            "type": "string"
+          },
+          "definition": {
+            "type": "object",
+            "description": "A valid json schema object. If $schema is not provided, poly defaults to draft-6."
+          },
+          "visibility": {
+            "enum": [
+              "ENVIRONMENT",
+              "TENANT",
+              "PUBLIC"
+            ],
+            "type": "string"
+          },
+          "ownerUserId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "definition"
+        ]
+      }
+    }
+  }
+}

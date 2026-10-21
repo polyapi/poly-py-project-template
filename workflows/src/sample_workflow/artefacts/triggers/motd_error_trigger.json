@@ -1,0 +1,6 @@
+{
+  "name": "example_motd_error",
+  "errorHandler": {"path": "/apis/example-motd/motd"},
+  "destination": {"functionName": "motd_error_handler", "functionContext": "example.sample_workflow"},
+  "enabled": true
+}

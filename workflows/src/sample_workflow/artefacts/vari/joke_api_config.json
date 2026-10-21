@@ -1,0 +1,12 @@
+{
+  "name": "joke_api_config",
+  "context": "example.sample_workflow",
+  "description": "Set hostUrl to https://official-joke-api.appspot.com in Canopy after creation. SECRET injection is resolved only by the API execution boundary.",
+  "visibility": "ENVIRONMENT",
+  "secrecy": "SECRET",
+  "schema": {
+    "type": "object",
+    "required": ["hostUrl"],
+    "properties": {"hostUrl": {"type": "string"}}
+  }
+}

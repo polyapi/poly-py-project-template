@@ -1,0 +1,87 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$ref": "#/components/schemas/CreateTriggerDto",
+  "components": {
+    "schemas": {
+      "CreateTriggerDto": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]$"
+          },
+          "source": {
+            "$ref": "#/components/schemas/TriggerSource"
+          },
+          "destination": {
+            "$ref": "#/components/schemas/TriggerDestination"
+          },
+          "waitForResponse": {
+            "type": "boolean"
+          },
+          "ownerUserId": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "source",
+          "destination"
+        ]
+      },
+      "TriggerDestination": {
+        "type": "object",
+        "properties": {
+          "serverFunctionId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "serverFunctionId"
+        ]
+      },
+      "TriggerErrorHandler": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "applicationIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "userIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "functionIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "path"
+        ]
+      },
+      "TriggerSource": {
+        "type": "object",
+        "properties": {
+          "webhookHandleId": {
+            "type": "string"
+          },
+          "errorHandler": {
+            "$ref": "#/components/schemas/TriggerErrorHandler"
+          }
+        }
+      }
+    }
+  }
+}

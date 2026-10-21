@@ -1,0 +1,43 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$ref": "#/components/schemas/UpdateSchemaDto",
+  "components": {
+    "schemas": {
+      "UpdateSchemaDto": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Name of the schema",
+            "example": "UserSchema"
+          },
+          "context": {
+            "type": "string",
+            "description": "Context of the schema",
+            "example": "userManagement"
+          },
+          "definition": {
+            "type": "object",
+            "description": "Schema definition",
+            "example": "{}"
+          },
+          "visibility": {
+            "enum": [
+              "ENVIRONMENT",
+              "TENANT",
+              "PUBLIC"
+            ],
+            "type": "string",
+            "description": "Visibility of the schema",
+            "example": "ENVIRONMENT"
+          },
+          "ownerUserId": {
+            "type": "string",
+            "description": "Owner User Id of the schema",
+            "example": ""
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,65 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$ref": "#/components/schemas/CreateVariableDto",
+  "components": {
+    "schemas": {
+      "CreateVariableDto": {
+        "type": "object",
+        "properties": {
+          "expiresAt": {
+            "type": "string",
+            "description": "Expiration date of the variable"
+          },
+          "context": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "value": true,
+          "secret": {
+            "type": "boolean"
+          },
+          "secrecy": {
+            "enum": [
+              "SECRET",
+              "OBSCURED",
+              "PARTIAL",
+              "NONE"
+            ],
+            "type": "string"
+          },
+          "visibility": {
+            "enum": [
+              "ENVIRONMENT",
+              "TENANT",
+              "PUBLIC"
+            ],
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "ALPHA",
+              "BETA",
+              "STABLE",
+              "DEPRECATED",
+              "DISABLED"
+            ],
+            "type": "string"
+          },
+          "ownerUserId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "context",
+          "name",
+          "value"
+        ]
+      }
+    }
+  }
+}

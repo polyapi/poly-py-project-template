@@ -1,0 +1,22 @@
+{
+  "name": "events",
+  "context": "example.streaming",
+  "description": "Reference only. Configure a provider and event handler before moving into artefacts/subscriptions.",
+  "type": "CUSTOM",
+  "transportProtocol": "WS",
+  "websocketUrl": "wss://provider.example.invalid/graphql",
+  "query": "subscription { event { id } }",
+  "enabled": false,
+  "destination": {
+    "functionName": "handle_event",
+    "functionContext": "example.streaming"
+  },
+  "paramsObject": {
+    "token": {
+      "type": "PolyVariable",
+      "variableName": "provider_token",
+      "variableContext": "example.streaming",
+      "path": null
+    }
+  }
+}

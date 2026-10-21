@@ -1,0 +1,7 @@
+{
+  "name": "Sample workflow",
+  "subpath": "example-workflow",
+  "description": "Starting point for a Canopy application.",
+  "visibility": "ENVIRONMENT",
+  "collections": []
+}

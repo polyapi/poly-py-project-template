@@ -1,0 +1,75 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$ref": "#/components/schemas/CreateTableDto",
+  "components": {
+    "schemas": {
+      "CreateTableDto": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "context": {
+            "type": "string",
+            "nullable": true
+          },
+          "description": {
+            "type": "string",
+            "nullable": true
+          },
+          "ownerUserId": {
+            "type": "string"
+          },
+          "visibility": {
+            "enum": [
+              "ENVIRONMENT",
+              "TENANT"
+            ],
+            "type": "string"
+          },
+          "columns": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TableColumnDto"
+            }
+          }
+        },
+        "required": [
+          "name",
+          "columns"
+        ]
+      },
+      "TableColumnDto": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "default": {
+            "type": "object"
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "unique": {
+            "type": "boolean"
+          },
+          "primary": {
+            "type": "boolean"
+          },
+          "schema": {
+            "type": "object",
+            "nullable": true
+          }
+        },
+        "required": [
+          "name",
+          "type"
+        ]
+      }
+    }
+  }
+}
