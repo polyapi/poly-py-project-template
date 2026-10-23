@@ -18,23 +18,38 @@ import re
 import shlex
 import subprocess
 import sys
+import tempfile
 import textwrap
 import traceback
 import types
+from contextlib import redirect_stdout
 from dataclasses import dataclass, field, replace
 from datetime import datetime
+from importlib.metadata import packages_distributions
 from pathlib import Path
 from typing import Any, Iterable, Iterator, Literal, cast
 
 from dotenv import dotenv_values, load_dotenv
 from jsonschema import Draft7Validator
 from polyapi.config import get_api_key_and_url
-from polyapi.parser import get_jsonschema_type, parse_function_code
+from polyapi.deployables import DeployableRecord
+from polyapi.parser import (
+    _get_req_name_if_not_in_base,
+    get_jsonschema_type,
+    parse_function_code,
+)
 from polyapi.utils import get_auth_headers
 import requests
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from cli.function_graph import (
+    FunctionGraph,
+    GraphError,
+    extract_references,
+    match_reference,
+)
 
 SKIP_VALIDATION_ACKNOWLEDGEMENT = "I know what am doing"
 
@@ -153,22 +168,29 @@ VARI_CONTEXT_METHODS = frozenset(
         "inject_async",
         "update",
         "update_async",
+        "onUpdate",
+    )
+)
+TABI_CONTEXT_MEMBERS = frozenset(
+    (
+        "count",
+        "select_many",
+        "select_one",
+        "insert_many",
+        "insert_one",
+        "upsert_many",
+        "upsert_one",
+        "update_many",
+        "update_one",
+        "delete_many",
+        "delete_one",
+        "table_id",
     )
 )
 _POLY_SCAN_PATTERN = re.compile(r"poly\.[a-zA-Z_][a-zA-Z0-9_.]*")
-_VARI_SCAN_PATTERN = re.compile(
-    r"(?<![a-zA-Z0-9_])vari\.[a-zA-Z_][a-zA-Z0-9_.]*\."
-    r"(?:inject_async|inject|get_async|get|update_async|update)"
-)
 _POLY_ALIAS_ASSIGN_PATTERN = re.compile(
     r"(?m)^\s*(?P<alias>[a-zA-Z_][a-zA-Z0-9_]*)\s*(?::[^=\n]+)?=\s*"
     r"(?:(?:cast)\([^,\n]+,\s*poly\s*\)|poly)"
-    r"(?:\.(?P<path>[a-zA-Z_][a-zA-Z0-9_.]*))?"
-    r"(?![a-zA-Z0-9_.]|\s*\()"
-)
-_VARI_ALIAS_ASSIGN_PATTERN = re.compile(
-    r"(?m)^\s*(?P<alias>[a-zA-Z_][a-zA-Z0-9_]*)\s*(?::[^=\n]+)?=\s*"
-    r"(?:(?:cast)\([^,\n]+,\s*vari\s*\)|vari)"
     r"(?:\.(?P<path>[a-zA-Z_][a-zA-Z0-9_.]*))?"
     r"(?![a-zA-Z0-9_.]|\s*\()"
 )
@@ -208,10 +230,6 @@ def _expand_poly_aliases(source: str) -> str:
     return _expand_namespace_aliases(source, "poly", _POLY_ALIAS_ASSIGN_PATTERN)
 
 
-def _expand_vari_aliases(source: str) -> str:
-    return _expand_namespace_aliases(source, "vari", _VARI_ALIAS_ASSIGN_PATTERN)
-
-
 def _is_schema_ref(fn: str) -> bool:
     return any(seg[0].isupper() and not seg.isupper() for seg in fn.split(".") if seg)
 
@@ -230,10 +248,10 @@ def _context_has_excluded_descendant(
 
 
 def _owner_context_from_reference(thing: str) -> str:
-    segs = [seg for seg in thing.split(".") if seg]
-    if len(segs) <= 1:
+    segments = [segment for segment in thing.split(".") if segment]
+    if len(segments) <= 1:
         return thing
-    return ".".join(segs[:-1])
+    return ".".join(segments[:-1])
 
 
 def _dedupe_contexts(contexts: Iterable[str]) -> list[str]:
@@ -314,11 +332,11 @@ def _get_context_ns(thing: str, excluded_contexts: tuple[str, ...] = ()) -> str:
     if excluded_contexts:
         return _owner_context_from_reference(thing)
 
-    segs = thing.split(".")
-    if segs[0] == "OOB" and len(segs) > 1:
-        namespace = f"OOB.{segs[1]}"
+    segments = thing.split(".")
+    if segments[0] == "OOB" and len(segments) > 1:
+        namespace = f"OOB.{segments[1]}"
     else:
-        namespace = segs[0]
+        namespace = segments[0]
     return namespace
 
 
@@ -449,25 +467,6 @@ class _PolyApiReferenceScan:
         namespace, segments = resolved
         self.add_reference(namespace, segments)
 
-    def add_dynamic_vari_base(self, node: ast.AST) -> None:
-        if isinstance(node, ast.Name):
-            chain = [node.id]
-        elif isinstance(node, ast.Attribute):
-            chain = _attribute_chain(node)
-        else:
-            chain = None
-        if chain is None:
-            return
-        resolved = self.resolve_attribute_chain(chain)
-        if resolved is None:
-            return
-        namespace, segments = resolved
-        if namespace != "vari":
-            return
-        context = ".".join(segments)
-        if context not in self.dynamic_vari_contexts:
-            self.dynamic_vari_contexts.append(context)
-
     def raise_for_unknown_imports(self) -> None:
         if not self.unknown_imports:
             return
@@ -489,11 +488,6 @@ class _PolyApiReferenceVisitor(ast.NodeVisitor):
             return
         self.scan.add_attribute_chain(chain)
 
-    def visit_Call(self, node: ast.Call) -> None:
-        if isinstance(node.func, ast.Name) and node.func.id == "getattr" and node.args:
-            self.scan.add_dynamic_vari_base(node.args[0])
-        self.generic_visit(node)
-
 
 def _parse_polyapi_source(source_code: str) -> ast.Module:
     try:
@@ -505,7 +499,14 @@ def _parse_polyapi_source(source_code: str) -> ast.Module:
         ) from error
 
 
-def _inspect_polyapi_source(source_code: str) -> _PolyApiReferenceScan:
+def _inspect_polyapi_source(
+    source_code: str,
+    table_exports: dict[str, str] | None = None,
+    available_table_modules: Iterable[str] = (),
+    *,
+    variable_exports: dict[str, str] | None = None,
+    available_variable_modules: Iterable[str] = (),
+) -> _PolyApiReferenceScan:
     module = _parse_polyapi_source(source_code)
     scan = _PolyApiReferenceScan()
     for node in ast.walk(module):
@@ -515,6 +516,31 @@ def _inspect_polyapi_source(source_code: str) -> _PolyApiReferenceScan:
             scan.register_import(node)
     _PolyApiReferenceVisitor(scan).visit(module)
     scan.raise_for_unknown_imports()
+    # Resources share lexical alias, tuple and helper-argument resolution.
+    for namespace in ("tabi", "vari"):
+        scan.references[namespace] = sorted(
+            extract_references(
+                source_code,
+                namespace=namespace,
+                known_exports=(
+                    (table_exports or {})
+                    if namespace == "tabi"
+                    else (variable_exports or {})
+                ),
+                available_modules=(
+                    available_table_modules
+                    if namespace == "tabi"
+                    else available_variable_modules
+                ),
+            )
+        )
+    scan.dynamic_vari_contexts = sorted(
+        {
+            reference.split("*")[0].rstrip(".")
+            for reference in scan.references["vari"]
+            if "*" in reference
+        }
+    )
     return scan
 
 
@@ -530,15 +556,18 @@ def context_from_generated_reference(
     excluded_contexts: tuple[str, ...],
 ) -> str | None:
     segments = [segment for segment in reference.split(".") if segment]
-    if namespace == "vari":
-        if len(segments) < 3 or segments[-1] not in VARI_CONTEXT_METHODS:
+    if namespace in {"vari", "tabi"}:
+        if "*" in segments or len(segments) < 2:
             return None
-        resource_reference = ".".join(segments[:-1])
-        return _get_context_ns(resource_reference, excluded_contexts)
-    if namespace == "tabi":
-        if len(segments) < 3:
-            return None
-        resource_reference = ".".join(segments[:-1])
+        members = VARI_CONTEXT_METHODS if namespace == "vari" else TABI_CONTEXT_MEMBERS
+        if segments[-1] in members:
+            if len(segments) < 3:
+                return None  # Root resource members are handled by the scope guard.
+            resource_reference = ".".join(segments[:-1])
+        else:
+            # A new resource may not be in the live catalog until the resource
+            # sync step, after the dynamic function plan is prepared.
+            resource_reference = reference
         return _get_context_ns(resource_reference, excluded_contexts)
     if namespace in {"schemas", "webhook"}:
         if len(segments) < 2:
@@ -555,7 +584,10 @@ def add_poly_dependency(
     contexts: list[str],
     excluded_contexts: tuple[str, ...],
 ) -> None:
-    normalized = reference.removeprefix("poly.").removesuffix("_async")
+    # Client functions retain their declared name, including a literal _async.
+    # Keep exact SDK paths when following bundled clients; server wrapper aliases
+    # are resolved separately by FunctionGraph for deployment ordering.
+    normalized = reference.removeprefix("poly.")
     if (
         normalized == func_name
         or _is_schema_ref(normalized)
@@ -615,28 +647,86 @@ def scan_function_dependencies(
     func_name: str,
     source_code: str,
     excluded_contexts: tuple[str, ...] = (),
+    known_functions: dict[str, str] | None = None,
+    table_exports: dict[str, str] | None = None,
+    variable_exports: dict[str, str] | None = None,
+    *,
+    available_table_modules: Iterable[str] = (),
+    available_variable_modules: Iterable[str] = (),
 ) -> dict[str, list[str]]:
-    inspection = _inspect_polyapi_source(source_code)
+    inspection = _inspect_polyapi_source(
+        source_code,
+        table_exports,
+        available_table_modules,
+        variable_exports=variable_exports,
+        available_variable_modules=available_variable_modules,
+    )
     namespace_references = inspection.references
     clean = _strip_non_code(source_code)
     clean = _expand_poly_aliases(clean)
-    clean = _expand_vari_aliases(clean)
     calls: list[str] = []
     contexts: list[str] = []
+    # Use parsed references: quoted examples must never widen generation scope.
+    scoped_variables = {
+        reference.rsplit(".", 1)[0]
+        for reference in namespace_references["vari"]
+        if len(reference.split(".")) > 2
+        and reference.split(".")[-1] in VARI_CONTEXT_METHODS
+    }
+    variable_dependencies = {
+        reference: match_reference(reference, variable_exports or {})
+        for reference in namespace_references["vari"]
+    }
+    root_variables = sorted(
+        {
+            reference.split(".")[0]
+            for reference in namespace_references["vari"]
+            if len(reference.split(".")) == 2
+            and reference.split(".")[-1] in VARI_CONTEXT_METHODS
+            and reference not in scoped_variables
+            and not variable_dependencies[reference]
+        }
+        | {
+            variable
+            for variables in variable_dependencies.values()
+            for variable in variables
+            if "." not in variable
+        }
+    )
+    # An alias to a scoped table named count can resemble a root count method.
+    # Its longer table.member reference establishes the scoped table identity.
+    scoped_tables = {
+        reference.rsplit(".", 1)[0]
+        for reference in namespace_references["tabi"]
+        if len(reference.split(".")) > 2
+        and reference.split(".")[-1] in TABI_CONTEXT_MEMBERS
+    }
+    table_dependencies = {
+        reference: match_reference(reference, table_exports or {})
+        for reference in namespace_references["tabi"]
+    }
+    root_tables = sorted(
+        {
+            reference.split(".")[0]
+            for reference in namespace_references["tabi"]
+            if len(reference.split(".")) == 2
+            and reference.split(".")[-1] in TABI_CONTEXT_MEMBERS
+            and reference not in scoped_tables
+            and not table_dependencies[reference]
+        }
+        | {
+            table
+            for tables in table_dependencies.values()
+            for table in tables
+            if "." not in table
+        }
+    )
 
     for reference in _POLY_SCAN_PATTERN.findall(clean):
         add_poly_dependency(
             reference=reference,
             func_name=func_name,
             calls=calls,
-            contexts=contexts,
-            excluded_contexts=excluded_contexts,
-        )
-
-    for reference in _VARI_SCAN_PATTERN.findall(clean):
-        add_generated_context(
-            namespace="vari",
-            reference=reference.removeprefix("vari."),
             contexts=contexts,
             excluded_contexts=excluded_contexts,
         )
@@ -650,8 +740,51 @@ def scan_function_dependencies(
             excluded_contexts=excluded_contexts,
         )
 
+    aliases = {key: key for key in (known_functions or {})}
+    aliases.update(
+        {
+            f"{key}_async": key
+            for key, kind in (known_functions or {}).items()
+            if kind == "server"
+        }
+    )
+    for reference in sorted(extract_references(source_code, known_exports=aliases)):
+        matches = match_reference(reference, aliases)
+        for resolved in sorted(
+            matches or ({reference} if "*" not in reference else set())
+        ):
+            if resolved in aliases and "." not in resolved:
+                # A known root callable has an empty context, even when its
+                # name matches an excluded context. Keep it for the root guard.
+                if resolved not in calls:
+                    calls.append(resolved)
+                continue
+            add_poly_dependency(
+                reference=resolved,
+                func_name=func_name,
+                calls=calls,
+                contexts=contexts,
+                excluded_contexts=excluded_contexts,
+            )
+
+    resource_dependencies = {"vari": variable_dependencies, "tabi": table_dependencies}
     for namespace in ("vari", "tabi", "schemas", "webhook"):
         for reference in namespace_references[namespace]:
+            matches = resource_dependencies.get(namespace, {}).get(reference, set())
+            if matches:
+                for resource in sorted(matches):
+                    if "." in resource:
+                        context = _get_context_ns(resource, excluded_contexts)
+                        if not context_is_orphan_excluded(context, excluded_contexts):
+                            contexts.append(context)
+                continue
+            # A bare import/alias prefix must not add a broader context than its
+            # resolved member when no catalog is available (e.g. offline checks).
+            if namespace in {"tabi", "vari"} and any(
+                other.startswith(f"{reference}.")
+                for other in namespace_references[namespace]
+            ):
+                continue
             add_generated_context(
                 namespace=namespace,
                 reference=reference,
@@ -666,7 +799,12 @@ def scan_function_dependencies(
             excluded_contexts=excluded_contexts,
         )
 
-    return {"calls": calls, "contexts": contexts}
+    return {
+        "calls": calls,
+        "contexts": _dedupe_contexts(contexts),
+        "root_variables": root_variables,
+        "root_tables": root_tables,
+    }
 
 
 # ------------------------------------------------------------------------------
@@ -986,6 +1124,16 @@ class CliArgs:
     skip_invalid: bool = False
     skip_validation_acknowledged: bool = False
     invalid_paths: tuple[Path, ...] = ()
+    dynamic: bool = False
+    seeds: tuple[str, ...] = ()
+    skip_unchanged_cfx: bool = False
+    yes: bool = False
+    max_leaves: int = 10
+    seed_from: Literal["remote", "specs", "none"] | None = None
+    json_output: bool = False
+    why: str | None = None
+    hubs: bool = False
+    through_sfx: bool = False
 
 
 class ResumeState:
@@ -994,35 +1142,81 @@ class ResumeState:
     FILENAME = ".flow_resume.json"
 
     def __init__(
-        self, repo_root: Path, load: bool, *, target: tuple[str, str] | None = None
+        self,
+        repo_root: Path,
+        load: bool,
+        *,
+        target: tuple[str, str] | None = None,
+        read_only: bool = False,
     ) -> None:
+        self._read_only = read_only
         self._path = repo_root / self.FILENAME
         self._target = (
             {"baseUrl": target[0].rstrip("/"), "environmentId": target[1]}
             if target
             else None
         )
+        self.pending_functions: set[str] = set()
         self._done: set[str] = set()
         self._fingerprints: dict[str, str] = {}
-        if load and self._target and self._path.exists():
+        if self._target:
             try:
-                data = json.loads(self._path.read_text())
-                if data.get("target") != self._target:
-                    print(
-                        "[resume] Ignoring state for a different or unverified target"
-                    )
-                    return
-                self._done = set(data.get("done", []))
+                data = json.loads(self._path.read_text(encoding="utf-8"))
+                if not isinstance(data, dict):
+                    raise ValueError("Expected a resume-state object")
+                done = data.get("done")
+                pending = data.get("pending_functions", [])
                 fingerprints = data.get("fingerprints", {})
-                if isinstance(fingerprints, dict):
-                    self._fingerprints = {
-                        str(key): str(value) for key, value in fingerprints.items()
-                    }
-                print(
-                    f"[resume] Loaded {len(self._done)} already-synced artefact(s) from {self._path.name}"
-                )
-            except Exception:
-                pass
+                saved_target = data.get("target")
+                if (
+                    not isinstance(done, list)
+                    or not all(isinstance(key, str) for key in done)
+                    or not isinstance(pending, list)
+                    or not all(isinstance(key, str) for key in pending)
+                    or not isinstance(fingerprints, dict)
+                    or not all(
+                        isinstance(key, str) and isinstance(value, str)
+                        for key, value in fingerprints.items()
+                    )
+                    or (
+                        saved_target is not None
+                        and (
+                            not isinstance(saved_target, dict)
+                            or not all(
+                                isinstance(saved_target.get(key), str)
+                                and saved_target[key]
+                                for key in ("baseUrl", "environmentId")
+                            )
+                        )
+                    )
+                ):
+                    raise ValueError("Invalid resume-state fields")
+            except FileNotFoundError:
+                return
+            except (OSError, ValueError):
+                raise DeployError(
+                    "Cannot read valid .flow_resume.json; restore a valid snapshot before continuing. "
+                    "If recovery is impossible, explicitly rebuild the affected dependency tree before discarding the state."
+                ) from None
+            if saved_target != self._target:
+                if pending:
+                    raise DeployError(
+                        "Unfinished dependency deployment belongs to another target; resume it with its original environment file"
+                    )
+                print("[resume] Ignoring state for a different or unverified target")
+                return
+            if not load:
+                if pending:
+                    raise DeployError(
+                        "Unfinished dependency deployment; rerun push-dynamic with --resume and the same target"
+                    )
+                return
+            self.pending_functions = set(pending)
+            self._done = set(done)
+            self._fingerprints = fingerprints
+            print(
+                f"[resume] Loaded {len(self._done)} already-synced artefact(s) from {self._path.name}"
+            )
 
     def is_done(self, key: str, fingerprint: str | None = None) -> bool:
         return (
@@ -1037,22 +1231,64 @@ class ResumeState:
             self._fingerprints[key] = fingerprint
         else:
             self._fingerprints.pop(key, None)
-        self._path.write_text(
-            json.dumps(
-                {
-                    "target": self._target,
-                    "done": sorted(self._done),
-                    "fingerprints": {
-                        key: self._fingerprints[key]
-                        for key in sorted(self._fingerprints)
-                        if key in self._done
-                    },
+        self.pending_functions.discard(key)
+        self.save()
+
+    def plan_functions(self, keys: set[str]) -> None:
+        self.pending_functions = set(keys)
+        self.save()
+
+    def save(self) -> None:
+        if self._read_only:
+            return
+        snapshot = json.dumps(
+            {
+                "target": self._target,
+                **(
+                    {"pending_functions": sorted(self.pending_functions)}
+                    if self.pending_functions
+                    else {}
+                ),
+                "done": sorted(self._done),
+                "fingerprints": {
+                    key: self._fingerprints[key]
+                    for key in sorted(self._fingerprints)
+                    if key in self._done
                 },
-                indent=2,
-            )
+            },
+            indent=2,
         )
+        temporary_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=self._path.parent,
+                prefix=".flow_resume.",
+                suffix=".tmp",
+                delete=False,
+            ) as output:
+                temporary_path = Path(output.name)
+                output.write(snapshot)
+                output.flush()
+                os.fsync(output.fileno())
+            # The destination remains a complete snapshot even if saving fails.
+            os.replace(temporary_path, self._path)
+        except OSError:
+            raise DeployError(
+                "Could not save resume state; deployment stopped. Restore write access and rerun with --resume."
+            ) from None
+        finally:
+            if temporary_path is not None:
+                try:
+                    temporary_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
 
     def clear(self) -> None:
+        if self._read_only:
+            return
+        self.pending_functions.clear()
         self._done.clear()
         self._fingerprints.clear()
         if self._path.exists():
@@ -1141,6 +1377,7 @@ def add_push_arguments(parser: argparse.ArgumentParser) -> None:
 class Logger:
     def __init__(self, verbose: bool) -> None:
         self.verbose = verbose
+        self.machine_readable = False
         self.colors_enabled = terminal_supports_color()
 
     def info(self, message: str) -> None:
@@ -1267,7 +1504,7 @@ class PolyApiClient:
                 headers={
                     **(
                         self.otp_manager.delete_headers()
-                        if getattr(self, "otp_manager", None)
+                        if self.otp_manager is not None
                         and method.upper() not in {"GET", "HEAD", "OPTIONS"}
                         else {}
                     ),
@@ -1401,6 +1638,64 @@ def create_parser() -> argparse.ArgumentParser:
         formatter_class=HelpFormatter,
     )
     add_push_arguments(push_parser)
+    dynamic_parser = subparsers.add_parser(
+        "push-dynamic",
+        help="Sync changed functions and all local consumers through nested clients.",
+        description="Plan nested Python SDK dependencies, then deploy dependencies before consumers.",
+        formatter_class=HelpFormatter,
+    )
+    add_push_arguments(dynamic_parser)
+    dynamic_parser.add_argument(
+        "--yes",
+        "-y",
+        action="store_true",
+        help="Accept the dependency plan; production and OTP safeguards still apply",
+    )
+    dynamic_parser.add_argument(
+        "--max-leaves",
+        type=int,
+        default=10,
+        help="Require typing the server count above this threshold (default: 10)",
+    )
+    dynamic_parser.add_argument(
+        "seeds",
+        nargs="*",
+        help="Force named context.name, source file, or directory trees",
+    )
+    dynamic_parser.add_argument(
+        "--seeds", dest="seed_list", help="Comma-separated forced function seeds"
+    )
+    dynamic_parser.add_argument(
+        "--skip-unchanged-cfx",
+        action="store_true",
+        help="Skip unchanged intermediate clients; always rebuild affected servers",
+    )
+    dynamic_parser.add_argument(
+        "--seed-from",
+        choices=("remote", "specs", "none"),
+        help="Detect changed seeds from live payloads, native SDK cached code, or forced seeds only",
+    )
+    dynamic_parser.add_argument(
+        "--json",
+        dest="json_output",
+        action="store_true",
+        help="Preview only: implies --dry-run; JSON goes to stdout and progress to stderr",
+    )
+    dynamic_parser.add_argument(
+        "--why",
+        metavar="CONTEXT.NAME",
+        help="Explain seed-to-caller paths and exit without deploying",
+    )
+    dynamic_parser.add_argument(
+        "--hubs",
+        action="store_true",
+        help="List shared clients and their consumer counts offline",
+    )
+    dynamic_parser.add_argument(
+        "--through-sfx",
+        action="store_true",
+        help="Show callers beyond server functions in reports only",
+    )
     return parser
 
 
@@ -1412,7 +1707,7 @@ def parse_args(argv: list[str] | None = None) -> CliArgs | None:
         return None
 
     parsed = parser.parse_args(effective_argv)
-    if getattr(parsed, "command", None) != "push":
+    if getattr(parsed, "command", None) not in {"push", "push-dynamic"}:
         parser.print_help()
         return None
     if parsed.delete_orphans and parsed.adopt_orphans:
@@ -1428,8 +1723,69 @@ def parse_args(argv: list[str] | None = None) -> CliArgs | None:
     enabled_types, function_types = parse_type_selection(
         parse_csv_env_value(parsed.types)
     )
+    dynamic = parsed.command == "push-dynamic"
+    json_output = bool(getattr(parsed, "json_output", False))
+    dry_run = parsed.dry_run or json_output
+    if json_output and parsed.build_schema:
+        raise DeployError(
+            "--json cannot be combined with --build-schema; reports never refresh local schemas"
+        )
+    if getattr(parsed, "max_leaves", 10) < 0:
+        raise DeployError("--max-leaves must be nonnegative")
+    seeds = tuple(getattr(parsed, "seeds", ())) + parse_csv_env_value(
+        getattr(parsed, "seed_list", None)
+    )
+    if dynamic and parsed.adopt_orphans:
+        raise DeployError("Use push for orphan adoption")
+    if dynamic and parsed.skip_invalid:
+        raise DeployError(
+            "push-dynamic requires a complete valid function graph; --skip-invalid is not supported"
+        )
+    if dynamic and enabled_types is not None and "functions" not in enabled_types:
+        raise DeployError("push-dynamic requires functions in --types")
+    if (
+        dynamic
+        and seeds
+        and not parsed.paths
+        and enabled_types is None
+        and parsed.seed_from in {None, "none"}
+    ):
+        enabled_types = ("functions",)
+    if dynamic and seeds and parsed.delete_orphans:
+        raise DeployError("Named function trees cannot delete orphans")
+    report_only = bool(getattr(parsed, "why", None) or getattr(parsed, "hubs", False))
+    offline_preview = (
+        dynamic and dry_run and getattr(parsed, "seed_from", None) in {"specs", "none"}
+    )
+    if getattr(parsed, "why", None) and getattr(parsed, "hubs", False):
+        raise DeployError("Choose either --why or --hubs")
+    if report_only or offline_preview:
+        if (
+            parsed.build_schema
+            or parsed.delete_orphans
+            or parsed.resume
+            or parsed.show_config
+        ):
+            raise DeployError(
+                "Graph reports and offline previews cannot refresh schemas, delete orphans, resume deployments, or show target config"
+            )
+        if enabled_types is not None and enabled_types != ("functions",):
+            raise DeployError(
+                "Graph reports and offline previews support functions only"
+            )
+        enabled_types = ("functions",)
     return CliArgs(
-        dry_run=parsed.dry_run,
+        dynamic=dynamic,
+        seed_from=getattr(parsed, "seed_from", None),
+        json_output=json_output,
+        why=getattr(parsed, "why", None),
+        hubs=getattr(parsed, "hubs", False),
+        through_sfx=getattr(parsed, "through_sfx", False),
+        yes=getattr(parsed, "yes", False),
+        max_leaves=getattr(parsed, "max_leaves", 10),
+        seeds=seeds,
+        skip_unchanged_cfx=getattr(parsed, "skip_unchanged_cfx", False),
+        dry_run=dry_run,
         force=parsed.force,
         verbose=parsed.verbose,
         delete_orphans=parsed.delete_orphans,
@@ -2577,6 +2933,11 @@ def build_config(repo_root: Path, cli_args: CliArgs) -> DeployConfig:
     enabled_types = cli_args.enabled_types or tuple(
         cast_artifact_types(env_csv("POLY_DEPLOY_ENABLED_TYPES", DEFAULT_ENABLED_TYPES))
     )
+    if cli_args.dynamic and "functions" not in enabled_types:
+        raise DeployError(
+            "push-dynamic requires functions in the effective resource selection; "
+            "include functions in --types or POLY_DEPLOY_ENABLED_TYPES"
+        )
     configured_orphan_excluded_contexts = env_csv(
         "POLY_DEPLOY_EXCLUDE_ORPHAN_CONTEXTS",
         env_csv("EXCLUDE_ORPHANS", ()),
@@ -2745,7 +3106,9 @@ def maybe_prompt_for_initial_scope(
     if cli_args.skip_validation_acknowledged:
         logger.muted("Scope acknowledged non-interactively")
         return cli_args
-    if cli_args.path_filters:
+    if cli_args.path_filters or (
+        cli_args.seeds and config.enabled_types == ("functions",)
+    ):
         return cli_args
     if not config.initial_scope_prompt_enabled:
         return cli_args
@@ -3414,7 +3777,7 @@ def infer_function_type_from_path(path: Path) -> FunctionType | None:
     return None
 
 
-def function_type_from_polyconfig_annotation(
+def function_type_from_poly_config_annotation(
     annotation: ast.AST | None, path: Path
 ) -> FunctionType | None:
     annotation_name = ast_annotation_name(annotation)
@@ -3425,7 +3788,7 @@ def function_type_from_polyconfig_annotation(
     return infer_function_type_from_path(path)
 
 
-def extract_polyconfig_from_python(
+def extract_poly_config_from_python(
     code: str, path: Path
 ) -> tuple[dict[str, Any], FunctionType] | None:
     try:
@@ -3464,7 +3827,7 @@ def extract_polyconfig_from_python(
         if not isinstance(config_value, dict):
             raise DeployError(f"polyConfig must be a dictionary: {path}")
 
-        function_type = function_type_from_polyconfig_annotation(annotation, path)
+        function_type = function_type_from_poly_config_annotation(annotation, path)
         if function_type is None:
             raise DeployError(f"Unable to determine polyConfig function type: {path}")
 
@@ -3478,7 +3841,7 @@ def load_function_specs_from_python(
     code = path.read_text(encoding="utf-8")
     if "polyConfig" not in code:
         return []
-    metadata = extract_polyconfig_from_python(code, path)
+    metadata = extract_poly_config_from_python(code, path)
     if metadata is None:
         return []
     config, function_type = metadata
@@ -3917,7 +4280,7 @@ def _traceback_contains_generated_polyapi_module(exc: BaseException) -> bool:
 
 def parse_function_code_with_import_fallback(
     code: str, name: str, context: str
-) -> dict[str, Any]:
+) -> DeployableRecord:
     try:
         return parse_function_code(code, name, context)
     except BaseException as exc:
@@ -3974,6 +4337,27 @@ def parse_function_code_with_import_fallback(
                     sys.modules.pop(module_name, None)
 
 
+def collect_client_requirements(code: str) -> set[str]:
+    """Resolve client imports without executing source or importing its modules."""
+    tree = ast.parse(code)
+    pip_name_lookup = packages_distributions()
+    dependencies: set[str] = set()
+    for node in ast.walk(tree):
+        modules: list[str | None]
+        if isinstance(node, ast.Import):
+            modules = [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            modules = [node.module]
+        else:
+            continue
+        for module in modules:
+            # Use the pinned SDK's base-image exclusions and distribution names.
+            requirement = _get_req_name_if_not_in_base(module, pip_name_lookup)
+            if requirement:
+                dependencies.add(requirement)
+    return dependencies
+
+
 def build_function_payload(
     spec: FunctionSpec,
     remote_func_context: dict | None = None,
@@ -4026,14 +4410,27 @@ def build_function_payload(
             remote_func_context,
             excluded_contexts,
         )
-        if generate_contexts:
-            payload["generateContexts"] = generate_contexts
+        if generate_contexts is None or generate_contexts:
+            # An explicit empty list clears an existing context filter when a
+            # root-level SDK function requires unfiltered generation.
+            payload["generateContexts"] = generate_contexts or []
 
     if spec.execution_api_key and spec.function_type == "server":
         payload["executionApiKey"] = spec.execution_api_key
 
-    if spec.function_type == "server" and parsed["dependencies"]:
-        payload["requirements"] = parsed["dependencies"]
+    if spec.function_type == "server":
+        dependencies = set(parsed.get("dependencies", []))
+        current_context = current_function_context(
+            spec, code, remote_func_context, excluded_contexts
+        )
+        for _, node in reachable_client_contexts(
+            f"{spec.context}.{spec.name}", current_context, excluded_contexts
+        ):
+            if node.get("kind") != "client" or "code" not in node:
+                continue
+            dependencies.update(collect_client_requirements(node["code"]))
+        if dependencies:
+            payload["requirements"] = sorted(dependencies)
 
     return payload
 
@@ -4081,7 +4478,9 @@ def run_server_function_post_deploy_script(
     env["FUNCTION_ID"] = function_id
     env["SERVICE_NAME"] = service_name
 
-    interactive_terminal = sys.stdin.isatty() and sys.stderr.isatty()
+    interactive_terminal = (
+        sys.stdin.isatty() and sys.stderr.isatty() and not logger.machine_readable
+    )
     run_kwargs: dict[str, Any] = {
         "cwd": config.repo_root,
         "env": env,
@@ -4308,6 +4707,572 @@ def log_forced_unchanged_update(
         logger.detail("diff: none (forced update)")
 
 
+@dataclass
+class DynamicFunctionPlan:
+    specs: dict[str, FunctionSpec]
+    payloads: dict[str, dict[str, Any]]
+    registry: FunctionRegistry
+    order: list[str]
+    seeds: set[str]
+    unchanged: int
+    graph: FunctionGraph
+    cycles: list[list[str]]
+    seed_from: str
+    offline: bool
+
+
+SDK_ASYNC_FUNCTION_TYPES = {"serverFunction", "apiFunction", "aiFunction"}
+SDK_EXTERNAL_FUNCTION_TYPES = SDK_ASYNC_FUNCTION_TYPES | {
+    "authFunction",
+    "webhookHandle",
+}
+SDK_AUTH_ASYNC_NAMES = {"introspectToken", "refreshToken", "revokeToken"}
+
+
+def index_sdk_function_specs(catalog: list, *, source: str) -> dict[str, dict]:
+    """Map effective SDK callable exports to their declaring specifications."""
+    from polyapi.generate import parse_function_specs
+    from polyapi.typedefs import SpecificationDto
+
+    if any(
+        not isinstance(item, dict) or not isinstance(item.get("type"), str)
+        for item in catalog
+    ):
+        raise DeployError(f"Invalid {source} entry")
+    try:
+        functions = parse_function_specs(cast(list[SpecificationDto], catalog))
+    except (KeyError, TypeError, ValueError, AttributeError):
+        raise DeployError(f"Invalid {source} function specification") from None
+    result: dict[str, dict] = {}
+    for item in functions:
+        if (
+            not isinstance(item.get("context"), str)
+            or not isinstance(item.get("name"), str)
+            or not item["name"]
+        ):
+            raise DeployError(f"Invalid function identity in {source}")
+        # Native generation emits definitions in catalog order. getToken is
+        # already async with no suffixed alias; other auth helpers export both.
+        # Clients and webhook listeners retain their literal declared names.
+        key = f"{item['context']}.{item['name']}" if item["context"] else item["name"]
+        result[key] = dict(item)
+        if item["type"] in SDK_ASYNC_FUNCTION_TYPES or (
+            item["type"] == "authFunction" and item["name"] in SDK_AUTH_ASYNC_NAMES
+        ):
+            result[f"{key}_async"] = result[key]
+    return result
+
+
+def read_cached_function_specs() -> dict[tuple[str, str], dict]:
+    # SDK 0.3.20 uses context/name/code, unlike other SDKs' cache formats.
+    from polyapi.generate import read_cached_specs
+
+    try:
+        cached = read_cached_specs()
+    except (OSError, ValueError):
+        raise DeployError(
+            "No readable native SDK specs cache; run python -m polyapi generate or use --seed-from remote"
+        ) from None
+    if not isinstance(cached, list):
+        raise DeployError("Invalid native SDK specs cache: expected a list")
+    result = {}
+    for key, item in index_sdk_function_specs(
+        cached, source="native SDK specs cache"
+    ).items():
+        kind = {"customFunction": "client", "serverFunction": "server"}.get(
+            item["type"]
+        )
+        declared_key = (
+            f"{item['context']}.{item['name']}" if item["context"] else item["name"]
+        )
+        if kind is None or key != declared_key:
+            continue
+        result[(kind, key)] = item
+    return result
+
+
+def cached_function_changed(spec: FunctionSpec, code: str, cached: dict) -> bool:
+    item = cached.get((spec.function_type, f"{spec.context}.{spec.name}"), {})
+    cached_code = item.get("code")
+    if not isinstance(cached_code, str) or not cached_code.strip():
+        return True  # Filtered caches and server specs may omit implementation code.
+
+    def normalize(value: str) -> str:
+        return strip_deploy_receipt(value).replace("\r\n", "\n").rstrip()
+
+    return normalize(code) != normalize(cached_code)
+
+
+def load_function_graph(
+    config: DeployConfig, cli_args: CliArgs, logger: Logger
+) -> tuple[dict[str, FunctionSpec], dict[str, tuple[FunctionType, str]], FunctionGraph]:
+    all_args = replace(cli_args, path_filters=(), function_types=None, invalid_paths=())
+    all_config = replace(config, skip_paths=(), orphan_excluded_contexts=())
+    specs = load_function_specs(all_config, all_args, logger)
+    by_key: dict[str, FunctionSpec] = {}
+    sources: dict[str, tuple[FunctionType, str]] = {}
+    for spec in specs:
+        key = f"{spec.context}.{spec.name}"
+        if key in by_key:
+            raise DeployError(f"Ambiguous client/server identity: {key}")
+        by_key[key] = spec
+        sources[key] = (
+            spec.function_type,
+            strip_deploy_receipt(spec.source_path.read_text(encoding="utf-8")),
+        )
+    try:
+        graph = FunctionGraph.build(sources)
+    except (GraphError, SyntaxError) as error:
+        raise DeployError(
+            f"Cannot build Python dependency graph ({type(error).__name__})"
+        ) from None
+    return by_key, sources, graph
+
+
+def dynamic_plan_report(
+    plan: DynamicFunctionPlan, config: DeployConfig, cli_args: CliArgs
+) -> dict[str, Any]:
+    graph = plan.graph
+    reached = graph.closure(plan.seeds, through_servers=cli_args.through_sfx)
+    report: dict[str, Any] = {
+        "seedFrom": plan.seed_from,
+        "offline": plan.offline,
+        "comparison": (
+            "cached-code"
+            if plan.seed_from == "specs"
+            else "live-payload" if not plan.offline else "forced-only"
+        ),
+        "seeds": sorted(plan.seeds),
+        "order": plan.order,
+        "cycles": plan.cycles,
+        "graph": {
+            "functions": len(graph.kinds),
+            "edges": sum(map(len, graph.dependencies.values())),
+        },
+        "nodes": [
+            {
+                "key": key,
+                "type": graph.kinds[key],
+                "deploy": key in plan.order,
+                "reason": (
+                    "seed"
+                    if key in plan.seeds
+                    else "consumer" if key in plan.order else "report-only"
+                ),
+                "via": sorted(graph.dependencies[key] & reached),
+                "file": relative_label(plan.specs[key].source_path, config.repo_root),
+            }
+            for key in sorted(reached)
+        ],
+    }
+    if plan.seed_from == "specs":
+        report["cacheEnvironment"] = "unknown"
+        report["notes"] = [
+            "Native SDK cache compares code only; missing functions or source code are treated as changed. Live target and payload checks still apply before deployment."
+        ]
+    if cli_args.why:
+        if cli_args.why not in graph.kinds:
+            raise DeployError(f"Unknown local function: {cli_args.why}")
+        chains, truncated = graph.explain(
+            plan.seeds, cli_args.why, through_servers=cli_args.through_sfx
+        )
+        report.update(target=cli_args.why, chains=chains, truncated=truncated)
+    return report
+
+
+def print_dynamic_report(
+    report: dict[str, Any], cli_args: CliArgs, logger: Logger
+) -> None:
+    if "hubs" in report:
+        for hub in report["hubs"]:
+            logger.info(
+                f"{hub['key']}: {hub['clientCallers']} client callers, {hub['serverLeaves']} server leaves"
+            )
+    elif cli_args.why:
+        for chain in report["chains"]:
+            logger.info(" -> ".join(chain))
+        if not report["chains"]:
+            logger.info(f"{cli_args.why}: no path from the selected seeds")
+        if report["truncated"]:
+            logger.warn("Additional paths omitted (limit 25)")
+    elif cli_args.through_sfx:
+        for node in report["nodes"]:
+            if not node["deploy"]:
+                logger.info(
+                    f"{node['key']} [{node['type']}] report-only; via {', '.join(node['via'])}"
+                )
+
+
+def function_resume_key(spec: FunctionSpec) -> str:
+    return f"fn:{spec.function_type}:{spec.context}:{spec.name}"
+
+
+def plan_dynamic_functions(
+    client: PolyApiClient | None,
+    config: DeployConfig,
+    cli_args: CliArgs,
+    logger: Logger,
+    resume_state: ResumeState,
+) -> DynamicFunctionPlan:
+    """Prepare the complete function tree before any deployment write."""
+    by_key, sources, graph = load_function_graph(config, cli_args, logger)
+    specs = list(by_key.values())
+    seed_from = cli_args.seed_from or (
+        "remote" if not cli_args.seeds or cli_args.path_filters else "none"
+    )
+    if client is None and seed_from == "remote":
+        raise DeployError("Live comparison requires a verified target")
+    cached = read_cached_function_specs() if seed_from == "specs" else {}
+    if seed_from == "specs":
+        logger.warn(
+            "Native SDK specs cache environment is unknown; comparing code only. Missing functions or source code are treated as changed."
+        )
+
+    eligible = {
+        key
+        for key, spec in by_key.items()
+        if not path_is_excluded(spec.source_path, config.skip_paths)
+        and not path_is_excluded(spec.discovery_path, config.skip_paths)
+        and not context_is_orphan_excluded(
+            spec.context, config.orphan_excluded_contexts
+        )
+        and spec.source_path not in cli_args.invalid_paths
+        and spec.discovery_path not in cli_args.invalid_paths
+    }
+    selected = {
+        f"{spec.context}.{spec.name}"
+        for spec in load_function_specs(config, cli_args, logger)
+    }
+    forced: set[str] = set()
+    for raw in cli_args.seeds:
+        if raw in by_key:
+            matches = {raw}
+        else:
+            scope = resolve_scope_filter(config.repo_root, raw)
+            matches = {
+                key
+                for key, spec in by_key.items()
+                if matches_path_filters(
+                    [spec.source_path, spec.discovery_path], (scope,), config.repo_root
+                )
+            }
+        if not matches:
+            raise DeployError(f"No local function matches seed: {raw}")
+        forced.update(matches)
+    pending_keys = {function_resume_key(spec): key for key, spec in by_key.items()}
+    if resume_state.pending_functions - pending_keys.keys():
+        raise DeployError(
+            "Pending function identities are no longer present; restore them before resuming"
+        )
+    forced.update(pending_keys[key] for key in resume_state.pending_functions)
+    detection = selected if seed_from != "none" else set()
+    if cli_args.force:
+        forced.update(detection)
+
+    registry = (
+        fetch_function_registry(client) if client is not None else FunctionRegistry()
+    )
+    detail_cache: dict[tuple[FunctionType, str], dict[str, Any]] = {}
+    contexts = build_local_func_context(specs, config.orphan_excluded_contexts)
+    if client is not None:
+        planned_exports: dict[str, dict[str, str]] = {"tabi": {}, "vari": {}}
+        for kind, namespace, patterns in (
+            ("tables", "tabi", config.table_globs),
+            ("variables", "vari", config.variable_globs),
+        ):
+            if kind not in config.enabled_types:
+                continue
+            for artifact in load_artifact_files(config, cli_args, patterns):
+                data = ensure_mapping(artifact.data, artifact.path)
+                context = data.get("context") or ""
+                if context_is_orphan_excluded(context, config.orphan_excluded_contexts):
+                    continue
+                require_owned_context(context, config)
+                owner = f"{context}.{data['name']}"
+                planned_exports[namespace][owner] = owner
+        contexts = build_remote_func_context(
+            client,
+            config.orphan_excluded_contexts,
+            local_func_context=contexts,
+            planned_resource_exports=planned_exports,
+        )
+    payloads: dict[str, dict[str, Any]] = {}
+    changed: set[str] = set()
+    execution_key = get_execution_api_key() if client is not None else None
+    compared: set[str] = set()
+
+    def compare(key: str) -> bool:
+        if key in compared:
+            return key in changed
+        spec = by_key[key]
+        if key not in eligible:
+            raise DeployError(
+                f"Dependency plan requires excluded function {key}; no functions deployed"
+            )
+        require_owned_context(spec.context, config)
+        if client is None and seed_from != "specs":
+            return False
+        compared.add(key)
+        if client is None:
+            if seed_from == "specs" and cached_function_changed(
+                spec, sources[key][1], cached
+            ):
+                changed.add(key)
+            return key in changed
+        if execution_key and spec.function_type == "server":
+            spec = replace(spec, execution_api_key=execution_key)
+        try:
+            payload = apply_server_function_image_override(
+                build_function_payload(spec, contexts, config.orphan_excluded_contexts),
+                spec,
+                config,
+                logger,
+            )
+            validate_endpoint_payload(
+                (
+                    "CreateServerCustomFunctionDto"
+                    if spec.function_type == "server"
+                    else "CreateClientCustomFunctionDto"
+                ),
+                payload,
+            )
+        except (
+            DeployError,
+            ImportError,
+            ValueError,
+            TypeError,
+            KeyError,
+            OSError,
+            SyntaxError,
+        ) as error:
+            raise DeployError(
+                f"Invalid dependency function {key} ({type(error).__name__})"
+            ) from None
+        payloads[key] = payload
+        existing = registry.get(spec.function_type, spec.context, spec.name)
+        if existing:
+            detail = fetch_function_detail(
+                client, spec.function_type, existing["id"], detail_cache
+            )
+            local, remote = normalize_function_subset(payload, detail)
+            differs = local != remote
+            if differs:
+                allowed, _ = can_update(
+                    local_timestamp=spec.local_timestamp,
+                    remote=detail,
+                    config=config,
+                    cli_args=cli_args,
+                )
+                if not allowed:
+                    raise DeployError(
+                        f"Dependency plan blocked by newer remote function: {key}"
+                    )
+        else:
+            differs = True
+        seed_changed = (
+            cached_function_changed(spec, sources[key][1], cached)
+            if seed_from == "specs"
+            else differs
+        )
+        if seed_changed:
+            changed.add(key)
+        return seed_changed
+
+    for key in sorted(detection | forced):
+        compare(key)
+    seeds = changed | forced
+    # An out-of-scope intermediate may have its own edits and other consumers.
+    # Promote it to a seed and repeat until every newly affected branch is planned.
+    while True:
+        closure = graph.closure(seeds)
+        for key in sorted(closure):
+            compare(key)
+        promoted = {key for key in closure & changed if graph.kinds[key] == "client"}
+        if promoted <= seeds:
+            break
+        seeds |= promoted
+
+    order, cycles = graph.order(closure)
+    if cli_args.skip_unchanged_cfx:
+        if any(key not in compared and graph.kinds[key] == "client" for key in order):
+            logger.warn(
+                "Client functions were not compared; retaining them in the offline plan."
+            )
+        order = [
+            key
+            for key in order
+            if key in seeds or graph.kinds[key] == "server" or key not in compared
+        ]
+    logger.section("FUNCTION DEPENDENCY PLAN")
+    logger.info(
+        f"{len(sources)} local functions; {len(seeds)} seeds; {len(order)} planned deployments"
+    )
+    for group in cycles:
+        logger.warn("Dependency cycle (stable order within cycle): " + ", ".join(group))
+    for key in sorted(graph.dynamic & closure):
+        logger.warn(
+            f"{key}: namespace/dynamic access includes all matching local functions"
+        )
+    for index, key in enumerate(order, 1):
+        reason = (
+            "seed"
+            if key in seeds
+            else "consumer of " + ", ".join(sorted(graph.dependencies[key] & closure))
+        )
+        scope_note = (
+            " (outside --paths)"
+            if cli_args.path_filters and key not in selected
+            else ""
+        )
+        logger.info(f"{index}. {key} [{graph.kinds[key]}] {reason}{scope_note}")
+    return DynamicFunctionPlan(
+        by_key,
+        payloads,
+        registry,
+        order,
+        seeds,
+        len(detection - set(order)),
+        graph,
+        cycles,
+        seed_from,
+        client is None,
+    )
+
+
+def confirm_dynamic_plan(
+    plan: DynamicFunctionPlan, config: DeployConfig, cli_args: CliArgs
+) -> None:
+    if cli_args.dry_run or cli_args.yes or cli_args.skip_validation_acknowledged:
+        return
+    if (
+        not plan.order
+        and config.enabled_types == ("functions",)
+        and not cli_args.delete_orphans
+    ):
+        return
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        raise DeployError(
+            "Review --dry-run, then use --yes to accept the dependency plan non-interactively"
+        )
+    try:
+        answer = (
+            input(
+                f"Deploy {len(plan.order)} planned function(s) and sync other selected resources? [y/N]: "
+            )
+            .strip()
+            .lower()
+        )
+        if answer not in {"y", "yes"}:
+            raise DeployError("Dependency deployment cancelled; nothing was deployed")
+        leaves = sum(plan.specs[key].function_type == "server" for key in plan.order)
+        if leaves > cli_args.max_leaves:
+            if input(
+                f"Type {leaves} to confirm rebuilding {leaves} server functions: "
+            ).strip() != str(leaves):
+                raise DeployError(
+                    "Dependency deployment cancelled; nothing was deployed"
+                )
+    except EOFError:
+        raise DeployError(
+            "Dependency deployment cancelled; nothing was deployed"
+        ) from None
+
+
+def execute_dynamic_functions(
+    plan: DynamicFunctionPlan,
+    client: PolyApiClient,
+    config: DeployConfig,
+    cli_args: CliArgs,
+    logger: Logger,
+    summary: Summary,
+    resume_state: ResumeState,
+) -> tuple[FunctionRegistry, bool]:
+    if plan.offline:
+        raise DeployError(
+            "Offline reports cannot be deployed; rerun against a verified target"
+        )
+    stats = summary.functions
+    stats.skipped += plan.unchanged
+    if cli_args.dry_run:
+        for key in plan.order:
+            spec = plan.specs[key]
+            existing = plan.registry.get(spec.function_type, spec.context, spec.name)
+            if existing:
+                stats.updated += 1
+            else:
+                stats.created += 1
+                plan.registry.upsert(
+                    spec.function_type,
+                    {
+                        "id": f"planned:{spec.function_type}:{key}",
+                        "context": spec.context,
+                        "name": spec.name,
+                    },
+                )
+        return plan.registry, bool(plan.order)
+    if "tables" in config.enabled_types and any(
+        plan.specs[key].function_type == "server" for key in plan.order
+    ):
+        # Table synchronization can create or change native generated schemas
+        # after planning. Recheck the prepared scopes before any function writes.
+        contexts = build_remote_func_context(
+            client,
+            config.orphan_excluded_contexts,
+            local_func_context=build_local_func_context(
+                list(plan.specs.values()), config.orphan_excluded_contexts
+            ),
+        )
+        for key in plan.order:
+            if plan.specs[key].function_type == "server":
+                validate_table_generation(
+                    [
+                        node
+                        for _, node in reachable_client_contexts(
+                            key, contexts, config.orphan_excluded_contexts
+                        )
+                    ],
+                    plan.payloads[key].get("generateContexts"),
+                )
+    resume_state.plan_functions(
+        {function_resume_key(plan.specs[key]) for key in plan.order}
+    )
+    for index, key in enumerate(plan.order):
+        spec = plan.specs[key]
+        payload = plan.payloads[key]
+        existing = plan.registry.get(spec.function_type, spec.context, spec.name)
+        try:
+            result = client.request(
+                "POST",
+                f"/functions/{spec.function_type}",
+                payload=payload,
+                expected=(200, 201),
+            )
+            plan.registry.upsert(
+                spec.function_type,
+                {"id": result["id"], "context": spec.context, "name": spec.name},
+            )
+            run_server_function_post_deploy_script(
+                function_id=result["id"], spec=spec, config=config, logger=logger
+            )
+            resume_state.mark_done(
+                function_resume_key(spec),
+                payload_resume_fingerprint(normalize_function_payload(payload)),
+            )
+        except (DeployError, OSError, KeyError, TypeError):
+            stats.failed += 1
+            logger.fail(
+                f"Deployment stopped at {key}; remaining consumers were not deployed. Retry push-dynamic with --resume and the same target."
+            )
+            logger.info(f"{len(plan.order) - index - 1} remaining function(s) not run")
+            return plan.registry, index > 0
+        if existing:
+            stats.updated += 1
+        else:
+            stats.created += 1
+        logger.ok(f"Deployed {key}")
+    return plan.registry, bool(plan.order)
+
+
 def sync_functions(
     *,
     client: PolyApiClient,
@@ -4316,7 +5281,19 @@ def sync_functions(
     logger: Logger,
     summary: Summary,
     resume_state: ResumeState,
+    dynamic_plan: DynamicFunctionPlan | None = None,
 ) -> tuple[FunctionRegistry, bool]:
+    if resume_state.pending_functions and not cli_args.dynamic:
+        raise DeployError(
+            "Resume the unfinished function tree with push-dynamic --resume"
+        )
+    if cli_args.dynamic:
+        plan = dynamic_plan or plan_dynamic_functions(
+            client, config, cli_args, logger, resume_state
+        )
+        return execute_dynamic_functions(
+            plan, client, config, cli_args, logger, summary, resume_state
+        )
     stats = summary.get("functions")
     registry = fetch_function_registry(client)
     detail_cache: dict[tuple[FunctionType, str], dict[str, Any]] = {}
@@ -4376,6 +5353,7 @@ def build_local_func_context(
     specs: list[FunctionSpec], excluded_contexts: tuple[str, ...] = ()
 ) -> dict[str, dict]:
     func_context: dict[str, dict] = {}
+    known = {f"{spec.context}.{spec.name}": spec.function_type for spec in specs}
     for spec in specs:
         if spec.source_path.suffix != ".py":
             continue
@@ -4383,10 +5361,62 @@ def build_local_func_context(
             continue
         func_name = f"{spec.context}.{spec.name}"
         code = strip_deploy_receipt(spec.source_path.read_text(encoding="utf-8"))
-        func_context[func_name] = scan_function_dependencies(
-            func_name, code, excluded_contexts
-        )
+        func_context[func_name] = {
+            **scan_function_dependencies(func_name, code, excluded_contexts, known),
+            "table_exports": {},
+            "table_failures": {},
+            "variable_exports": {},
+            "kind": spec.function_type,
+            "code": code,
+        }
     return func_context
+
+
+def index_sdk_table_exports(catalog: list) -> tuple[dict[str, str], dict[str, str]]:
+    """Associate native table classes and flattened query/row types with owners.
+
+    Parse SDK-rendered definitions without executing them or shared client source.
+    This also covers schema-dependent nested row types without guessing suffixes.
+    """
+    from polyapi.poly_tables import _render_table
+    from polyapi.typedefs import TableSpecDto
+
+    exports: dict[str, str] = {}
+    failures: dict[str, str] = {}
+    for table in catalog:
+        if not isinstance(table, dict) or table.get("type") != "table":
+            continue
+        context = table.get("context") or ""
+        prefix = f"{context}." if context else ""
+        owner = f"{prefix}{table['name']}"
+        try:
+            module = ast.parse(_render_table(cast(TableSpecDto, table)))
+        except (
+            KeyError,
+            TypeError,
+            ValueError,
+            SyntaxError,
+            IndexError,
+            AttributeError,
+        ):
+            # A visible table may never enter this server's generated SDK. Keep
+            # its identity and defer failure until the effective scope is known.
+            exports[owner] = owner
+            failures[owner] = context
+            continue
+        for node in module.body:
+            if isinstance(node, ast.ClassDef):
+                names = [node.name]
+            elif isinstance(node, ast.Assign):
+                names = [
+                    target.id for target in node.targets if isinstance(target, ast.Name)
+                ]
+            elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+                names = [node.target.id]
+            else:
+                continue
+            exports.update({f"{prefix}{name}": owner for name in names})
+    return exports, failures
 
 
 def build_remote_func_context(
@@ -4394,15 +5424,82 @@ def build_remote_func_context(
     excluded_contexts: tuple[str, ...] = (),
     *,
     local_func_context: dict[str, dict],
+    planned_resource_exports: dict[str, dict[str, str]] | None = None,
 ) -> dict[str, dict]:
-    # Server functions execute remotely. Only referenced Python client functions
-    # are bundled into this deployment and need transitive SDK dependencies.
-    func_context = dict(local_func_context)
-    functions = {
-        f"{item['context']}.{item['name']}": item
-        for item in client.request("GET", "/functions/client")
-        if not context_is_orphan_excluded(item.get("context"), excluded_contexts)
+    # Use the same live catalog and language filter as SDK generation. /specs
+    # applies shared visibility and public namespaces; its order sets precedence.
+    # Keep this read on the already verified target, without loading SDK credentials.
+    catalog = resource_list(client.request("GET", "/specs", params={"noTypes": "true"}))
+    table_exports, table_failures = index_sdk_table_exports(catalog)
+    variable_exports = {
+        ".".join(filter(None, (item.get("context"), item["name"]))): ".".join(
+            filter(None, (item.get("context"), item["name"]))
+        )
+        for item in catalog
+        if isinstance(item, dict) and item.get("type") == "serverVariable"
     }
+    # Dynamic plans precede resource synchronization. Selected local identities
+    # disambiguate new resources named like SDK methods without inventing types
+    # or replacing the live SDK's export ownership and rendering failures.
+    for namespace, exports in (("tabi", table_exports), ("vari", variable_exports)):
+        for name, owner in (planned_resource_exports or {}).get(namespace, {}).items():
+            exports.setdefault(name, owner)
+    functions = {
+        key: item
+        for key, item in index_sdk_function_specs(
+            catalog, source="live SDK catalog"
+        ).items()
+        if not context_is_orphan_excluded(item["context"], excluded_contexts)
+    }
+    # A local declaration may replace its own stale source, but cannot claim an
+    # export owned by another declaration (including generated HTTP aliases).
+    for key, node in local_func_context.items():
+        kind = node.get("kind", "client")
+        expected_type = "serverFunction" if kind == "server" else "customFunction"
+        exports = (key, f"{key}_async") if kind == "server" else (key,)
+        for export in exports:
+            function = functions.get(export)
+            if function is None:
+                continue
+            declared_key = (
+                f"{function['context']}.{function['name']}"
+                if function["context"]
+                else function["name"]
+            )
+            if declared_key != key or function["type"] != expected_type:
+                raise DeployError(
+                    f"Ambiguous generated SDK name: {export}; local {kind} {key} "
+                    f"conflicts with {function['type']} {declared_key} in the live "
+                    "SDK catalog. Rename the conflicting function before deployment."
+                )
+    # Shared clients supply dependency information only; they never enter the
+    # deployment registry.
+    func_context = dict(local_func_context)
+    known = {
+        key: "client" if item["type"] == "customFunction" else "external"
+        for key, item in functions.items()
+        if item["type"] == "customFunction"
+        or item["type"] in SDK_EXTERNAL_FUNCTION_TYPES
+    }
+    known.update(
+        {key: node.get("kind", "client") for key, node in func_context.items()}
+    )
+    for key, node in list(func_context.items()):
+        if "code" in node:
+            func_context[key] = {
+                **node,
+                **scan_function_dependencies(
+                    key,
+                    node["code"],
+                    excluded_contexts,
+                    known,
+                    table_exports,
+                    variable_exports,
+                ),
+                "table_exports": table_exports,
+                "table_failures": table_failures,
+                "variable_exports": variable_exports,
+            }
     pending = [call for node in func_context.values() for call in node["calls"]]
     visited: set[str] = set()
     while pending:
@@ -4416,16 +5513,91 @@ def build_remote_func_context(
         function = functions.get(func_name)
         if function is None:
             continue
-        if function.get("language", "python").lower() != "python":
+        if function["type"] != "customFunction":
+            if (
+                function["type"] in SDK_EXTERNAL_FUNCTION_TYPES
+                and not function["context"]
+            ):
+                # Root wrappers and listeners require unfiltered SDK generation.
+                # Retain only that dependency, never their implementation.
+                func_context[func_name] = {
+                    "kind": "external",
+                    "calls": [],
+                    "contexts": [],
+                }
             continue
-        data = client.request("GET", f"/functions/client/{function['id']}")
-        if data.get("language", "python").lower() != "python":
-            continue
-        func_context[func_name] = scan_function_dependencies(
-            func_name, data.get("code", ""), excluded_contexts
-        )
+        code = function.get("code")
+        if not isinstance(code, str) or not code.strip():
+            raise DeployError(f"Missing Python source for SDK client: {func_name}")
+        func_context[func_name] = {
+            **scan_function_dependencies(
+                func_name,
+                code,
+                excluded_contexts,
+                known,
+                table_exports,
+                variable_exports,
+            ),
+            "table_exports": table_exports,
+            "table_failures": table_failures,
+            "variable_exports": variable_exports,
+            "kind": "client",
+            "code": code,
+        }
         pending.extend(func_context[func_name]["calls"])
     return func_context
+
+
+def current_function_context(
+    spec: FunctionSpec,
+    code: str,
+    func_context: dict | None,
+    excluded_contexts: tuple[str, ...],
+) -> dict[str, dict]:
+    contexts = dict(func_context or {})
+    key = f"{spec.context}.{spec.name}"
+    known = {name: node.get("kind", "client") for name, node in contexts.items()}
+    known[key] = spec.function_type
+    # Re-scan current source, never inherit stale remote self-dependencies.
+    table_exports = contexts.get(key, {}).get("table_exports", {})
+    variable_exports = contexts.get(key, {}).get("variable_exports", {})
+    table_failures = contexts.get(key, {}).get("table_failures", {})
+    contexts[key] = {
+        **scan_function_dependencies(
+            key, code, excluded_contexts, known, table_exports, variable_exports
+        ),
+        "table_exports": table_exports,
+        "table_failures": table_failures,
+        "variable_exports": variable_exports,
+        "kind": spec.function_type,
+        "code": code,
+    }
+    return contexts
+
+
+def reachable_client_contexts(
+    func_name: str,
+    func_context: dict[str, dict],
+    excluded_contexts: tuple[str, ...] = (),
+) -> Iterator[tuple[str, dict]]:
+    from collections import deque
+
+    visited: set[str] = set()
+    queue = deque([func_name])
+    while queue:
+        key = queue.popleft()
+        if key in visited:
+            continue
+        visited.add(key)
+        node = func_context.get(key)
+        if node is None or context_is_orphan_excluded(
+            key.rpartition(".")[0], excluded_contexts
+        ):
+            continue
+        if key != func_name and node.get("kind") == "server":
+            continue  # Its implementation and packages run across an HTTP boundary.
+        yield key, node
+        queue.extend(node["calls"])
 
 
 def get_transitive_contexts(
@@ -4433,27 +5605,16 @@ def get_transitive_contexts(
     func_context: dict[str, dict],
     excluded_contexts: tuple[str, ...] = (),
 ) -> list[str]:
-    from collections import deque
-
-    visited: set[str] = set()
-    queue: deque[str] = deque([func_name])
     all_contexts: list[str] = []
-    while queue:
-        fn = queue.popleft()
-        if fn in visited:
-            continue
-        visited.add(fn)
-        if fn not in func_context:
-            continue
-        for ns in func_context[fn]["contexts"]:
+    for _, node in reachable_client_contexts(
+        func_name, func_context, excluded_contexts
+    ):
+        for context in node["contexts"]:
             if (
-                not context_is_orphan_excluded(ns, excluded_contexts)
-                and ns not in all_contexts
+                not context_is_orphan_excluded(context, excluded_contexts)
+                and context not in all_contexts
             ):
-                all_contexts.append(ns)
-        for called in func_context[fn]["calls"]:
-            if called not in visited:
-                queue.append(called)
+                all_contexts.append(context)
     return all_contexts
 
 
@@ -4499,34 +5660,161 @@ def resolve_contexts_against_exclusions(
     return compact_contexts_against_safe_parents(resolved, excluded_contexts)
 
 
+def generated_resource_modules(
+    exports: dict[str, str], generate_contexts: Iterable[str] | None
+) -> set[str]:
+    contexts = tuple(generate_contexts or ())
+    modules: set[str] = set()
+    for owner in set(exports.values()):
+        parts = owner.split(".")[:-1]
+        if contexts and not any(
+            _context_is_same_or_child(".".join(parts), selected)
+            for selected in contexts
+        ):
+            continue
+        modules.update(".".join(parts[:length]) for length in range(1, len(parts) + 1))
+    return modules
+
+
+def validate_table_generation(
+    nodes: list[dict], generate_contexts: list[str] | None
+) -> None:
+    failures = {
+        owner: context
+        for node in nodes
+        for owner, context in node.get("table_failures", {}).items()
+    }
+    if not failures:
+        return
+    # The SDK renders every table in the selected contexts, even unused ones.
+    required = {
+        owner
+        for owner, context in failures.items()
+        if not generate_contexts
+        or any(
+            _context_is_same_or_child(context, selected)
+            for selected in generate_contexts
+        )
+    }
+    exports = {
+        name: owner
+        for node in nodes
+        for name, owner in node.get("table_exports", {}).items()
+    }
+    namespaces = {
+        context: context for context in generated_resource_modules(exports, None)
+    }
+    generated_modules = generated_resource_modules(exports, generate_contexts)
+    for node in nodes:
+        for reference in extract_references(
+            node.get("code", ""),
+            namespace="tabi",
+            known_exports=exports,
+            available_modules=generated_modules,
+        ):
+            matches = match_reference(reference, exports)
+            required.update(matches & failures.keys())
+            if matches:
+                continue
+            # Failed rendering leaves flattened row/query exports unknown. Use
+            # their module scope, not guessed type suffixes, and retain root
+            # references even when explicit filters would otherwise omit them.
+            contexts = match_reference(reference, namespaces) or {""}
+            required.update(
+                owner
+                for owner, context in failures.items()
+                if context in contexts
+                or any(
+                    selected and _context_is_same_or_child(context, selected)
+                    for selected in contexts
+                )
+            )
+    if required:
+        raise DeployError(
+            "Cannot generate SDK table exports required by this server: "
+            + ", ".join(sorted(required))
+        )
+
+
 def resolve_server_generate_contexts(
     spec: FunctionSpec,
     code: str,
     func_context: dict | None,
     excluded_contexts: tuple[str, ...],
-) -> list[str]:
-    local_contexts = infer_generate_contexts(code, excluded_contexts)
+) -> list[str] | None:
     func_name = f"{spec.context}.{spec.name}"
-    current_context = {
-        **(func_context or {}),
-        func_name: scan_function_dependencies(func_name, code, excluded_contexts),
-    }
+    current_context = current_function_context(
+        spec, code, func_context, excluded_contexts
+    )
+    local_contexts = current_context[func_name]["contexts"]
+    root_dependencies: set[str] = set()
+    reachable = list(
+        reachable_client_contexts(func_name, current_context, excluded_contexts)
+    )
+    nodes = [node for _, node in reachable]
     remote_contexts = get_transitive_contexts(
         func_name, current_context, excluded_contexts
     )
     inferred_contexts = _dedupe_contexts([*local_contexts, *remote_contexts])
     replacement_candidates = [spec.context, *local_contexts, *remote_contexts]
-    if spec.generate_contexts:
-        return resolve_contexts_against_exclusions(
-            spec.generate_contexts,
-            replacement_candidates,
-            excluded_contexts,
-        )
-    return resolve_contexts_against_exclusions(
-        inferred_contexts,
+    for key, node in reachable:
+        if "." not in key and node.get("kind") in {"client", "external"}:
+            root_dependencies.add(f"poly.{key}")
+        root_variables = node.get("root_variables", [])
+        root_tables = node.get("root_tables", [])
+        if (
+            (root_tables or root_variables)
+            and spec.generate_contexts
+            and (node.get("table_exports") or node.get("variable_exports"))
+        ):
+            # An explicit child scope can supply an otherwise unused module import.
+            # Re-scan without altering shared nodes; actual table uses stay strong.
+            selected_contexts = resolve_contexts_against_exclusions(
+                spec.generate_contexts, replacement_candidates, excluded_contexts
+            )
+            rescanned = scan_function_dependencies(
+                key,
+                node["code"],
+                excluded_contexts,
+                table_exports=node.get("table_exports", {}),
+                variable_exports=node.get("variable_exports", {}),
+                available_table_modules=(
+                    generated_resource_modules(
+                        node.get("table_exports", {}), selected_contexts
+                    )
+                    if selected_contexts
+                    else ()
+                ),
+                available_variable_modules=(
+                    generated_resource_modules(
+                        node.get("variable_exports", {}), selected_contexts
+                    )
+                    if selected_contexts
+                    else ()
+                ),
+            )
+            root_tables = rescanned["root_tables"]
+            root_variables = rescanned["root_variables"]
+        root_dependencies.update(f"vari.{name}" for name in root_variables)
+        root_dependencies.update(f"tabi.{name}" for name in root_tables)
+    if root_dependencies:
+        # The platform ignores empty context selectors. SDK 0.3.20 can include
+        # root dependencies only through unfiltered generation on this payload path.
+        if excluded_contexts or spec.generate_contexts:
+            raise DeployError(
+                "Root-level SDK functions, Vari or Tabi require unfiltered generation; cannot "
+                "preserve explicit generate_contexts or context exclusions: "
+                + ", ".join(sorted(root_dependencies))
+            )
+        validate_table_generation(nodes, None)
+        return None
+    resolved = resolve_contexts_against_exclusions(
+        spec.generate_contexts or inferred_contexts,
         replacement_candidates,
         excluded_contexts,
     )
+    validate_table_generation(nodes, resolved)
+    return resolved
 
 
 def sync_function_group(
@@ -4548,9 +5836,7 @@ def sync_function_group(
         **(local_func_context or {}),
         **build_local_func_context(specs, config.orphan_excluded_contexts),
     }
-    if not config.orphan_excluded_contexts and any(
-        spec.function_type == "server" for spec in specs
-    ):
+    if any(spec.function_type == "server" for spec in specs):
         func_context = build_remote_func_context(
             client, config.orphan_excluded_contexts, local_func_context=func_context
         )
@@ -4770,7 +6056,12 @@ def run_poly_generate(
     if config.generate_ids:
         command.extend(["--ids", ",".join(config.generate_ids)])
     logger.action(f"Running {' '.join(command)} ({reason})")
-    completed = subprocess.run(command, cwd=config.repo_root, check=False)
+    if cli_args and cli_args.json_output:
+        completed = subprocess.run(
+            command, cwd=config.repo_root, check=False, stdout=sys.stderr
+        )
+    else:
+        completed = subprocess.run(command, cwd=config.repo_root, check=False)
     if completed.returncode != 0:
         raise DeployError(
             f"`{' '.join(command)}` failed with exit code {completed.returncode}"
@@ -4807,9 +6098,19 @@ def normalize_variable_subset(
     return normalize_description_fields_for_compare(local_normalized, remote_normalized)
 
 
-def build_variable_update_payload(payload: dict[str, Any]) -> dict[str, Any]:
+def build_variable_update_payload(
+    payload: dict[str, Any],
+    remote: dict[str, Any] | None = None,
+    *,
+    update_secret_values: bool = False,
+) -> dict[str, Any]:
     update_payload = copy.deepcopy(payload)
-    if is_empty_variable_value(update_payload.get("value")):
+    protected = is_protected_variable_payload(payload) or is_protected_variable_payload(
+        remote or {}
+    )
+    if (protected and not update_secret_values) or is_empty_variable_value(
+        update_payload.get("value")
+    ):
         update_payload.pop("value", None)
     return update_payload
 
@@ -4898,6 +6199,11 @@ def sync_variables(
                     detail = client.request("GET", f"/variables/{existing['id']}")
                     detail_cache[existing["id"]] = detail
 
+                data = build_variable_update_payload(
+                    data,
+                    detail,
+                    update_secret_values=config.update_existing_secret_variables,
+                )
                 force_update_obscured = (
                     is_obscured_variable_payload(data) and cli_args.force
                 )
@@ -4959,7 +6265,7 @@ def sync_variables(
                     continue
 
                 if not cli_args.dry_run:
-                    update_payload = build_variable_update_payload(data)
+                    update_payload = data
                     try:
                         client.request(
                             "PATCH",
@@ -4974,6 +6280,10 @@ def sync_variables(
                         if (
                             config.recreate_variables_on_secrecy_change
                             and cannot_change_secrecy
+                            and (
+                                not is_protected_variable_payload(detail)
+                                or config.update_existing_secret_variables
+                            )
                         ):
                             client.request(
                                 "DELETE",
@@ -5029,7 +6339,7 @@ def build_variable_payload(path: Path, data: dict[str, Any]) -> dict[str, Any]:
     if "context" not in payload or "name" not in payload:
         raise DeployError(f"Variable file {path} must include context and name")
     if is_secret_variable_payload(payload):
-        # Match the Maybourne CLI behavior: never deploy SECRET values from source files.
+        # Never deploy SECRET values from source files.
         # Poly rejects empty-string secret values on create, and real secret values should be
         # set in Canopy rather than stored in JSON. OBSCURED values are readable at runtime;
         # when a real checked-in value is present, keep it so first-time variable creation can
@@ -5040,6 +6350,13 @@ def build_variable_payload(path: Path, data: dict[str, Any]) -> dict[str, Any]:
             return payload
         payload["value"] = {}
     return payload
+
+
+def is_protected_variable_payload(payload: dict[str, Any]) -> bool:
+    # Existing PARTIAL values still require protection despite deprecated creation.
+    return is_secret_variable_payload(payload) or (
+        str(payload.get("secrecy", "")).upper() == "PARTIAL"
+    )
 
 
 def is_secret_variable_payload(payload: dict[str, Any]) -> bool:
@@ -5870,14 +7187,12 @@ def normalize_job_subset(
     payload: dict[str, Any], remote: dict[str, Any]
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     local_normalized, remote_normalized = normalize_dict_subset(payload, remote)
-    normalize_non_round_trippable_job_fields_in_place(
-        local_normalized, remote_normalized
-    )
+    normalize_unreported_job_limits_in_place(local_normalized, remote_normalized)
     normalize_unreported_job_defaults_in_place(local_normalized, remote_normalized)
     return local_normalized, remote_normalized
 
 
-def normalize_non_round_trippable_job_fields_in_place(
+def normalize_unreported_job_limits_in_place(
     local: dict[str, Any], remote: dict[str, Any]
 ) -> None:
     for key in ("maxConcurrentJobs", "maxExecutionTime"):
@@ -7460,7 +8775,7 @@ def process_orphans(
             "Orphan detection disabled because local artefacts failed validation."
         )
         return False
-    if cli_args.path_filters:
+    if cli_args.path_filters or cli_args.seeds:
         logger.info("Scoped push: orphan detection is disabled.")
         return False
     orphans, excluded_counts = collect_orphans(
@@ -8361,7 +9676,7 @@ def resolve_ai_payload(
         for tool in payload["toolFunctions"]:
             if not isinstance(tool, dict) or "id" in tool:
                 raise DeployError("Tool functions must use portable references")
-            resolved = {
+            resolved: dict[str, Any] = {
                 "id": exact_reference(
                     functions, tool.get("functionContext"), tool.get("functionName")
                 )
@@ -8399,7 +9714,7 @@ def extra_orphans(
     files: list[ArtifactFile],
     records: list[dict[str, Any]],
 ) -> bool:
-    if cli_args.path_filters or cli_args.invalid_paths:
+    if cli_args.path_filters or cli_args.invalid_paths or cli_args.seeds:
         return False
     # Skipped paths still own resources; a skip must never become a deletion.
     all_files = load_artifact_files(
@@ -8409,7 +9724,7 @@ def extra_orphans(
     changed = False
     for item in records:
         context = item.get("context")
-        if context_is_orphan_skipped(context, config):
+        if not isinstance(context, str) or context_is_orphan_skipped(context, config):
             continue
         if (context, item.get("name")) in identities:
             continue
@@ -8832,8 +10147,63 @@ def main() -> int:
     cli_args = parse_args()
     if cli_args is None:
         return 0
+    if not cli_args.json_output:
+        return run_flow(cli_args, {})
+    report: dict[str, Any] = {}
+    output = sys.stdout
+    try:
+        with redirect_stdout(sys.stderr):
+            status = run_flow(cli_args, report)
+        report["status"] = (
+            "failed"
+            if status
+            else (
+                "report"
+                if cli_args.why or cli_args.hubs
+                else "preview" if cli_args.dry_run else "completed"
+            )
+        )
+        return status
+    except (Exception, KeyboardInterrupt):
+        report["status"] = "failed"
+        raise
+    finally:
+        print(json.dumps(report, indent=2, sort_keys=True), file=output)
+
+
+def run_flow(cli_args: CliArgs, report: dict[str, Any]) -> int:
     repo_root = find_repo_root()
     logger = Logger(verbose=cli_args.verbose)
+    logger.machine_readable = cli_args.json_output
+    offline = cli_args.dynamic and (
+        cli_args.hubs
+        or (
+            cli_args.seed_from in {"specs", "none"}
+            and (cli_args.dry_run or cli_args.why)
+        )
+    )
+    if offline:
+        cli_args = normalize_cli_path_filters(repo_root, cli_args)
+        config = build_config(repo_root, cli_args)
+        if cli_args.hubs:
+            _, _, graph = load_function_graph(config, cli_args, logger)
+            report.update(offline=True, hubs=graph.hubs())
+        else:
+            plan = plan_dynamic_functions(
+                None,
+                config,
+                cli_args,
+                logger,
+                ResumeState(repo_root, False, read_only=True),
+            )
+            report.update(dynamic_plan_report(plan, config, cli_args))
+        print_dynamic_report(report, cli_args, logger)
+        logger.info(
+            "Offline report only; target, native deployment payloads and remote-only dependencies are not verified."
+        )
+        return 0
+    if cli_args.why:
+        cli_args = replace(cli_args, dry_run=True)
     env_file = load_env(repo_root)
     warn_for_missing_default_env_file(env_file, logger)
     # Mandatory for every command
@@ -8847,26 +10217,27 @@ def main() -> int:
 
     print_startup_banner(logger=logger, config=config, cli_args=cli_args)
     print_deployment_visibility(logger, preflight, cli_args, target_env_id)
-    maybe_confirm_branch_env_file_match(repo_root, preflight, logger, cli_args)
-    cli_args = maybe_prompt_for_initial_scope(cli_args, config, logger)
-    execution_api_key = get_execution_api_key()
-    enforce_production_safeguards(preflight, cli_args, execution_api_key)
-    if cli_args.build_schema:
-        from cli.schema_refresh import refresh, SchemaRefreshError
+    if not cli_args.why:
+        maybe_confirm_branch_env_file_match(repo_root, preflight, logger, cli_args)
+        cli_args = maybe_prompt_for_initial_scope(cli_args, config, logger)
+        execution_api_key = get_execution_api_key()
+        enforce_production_safeguards(preflight, cli_args, execution_api_key)
+        if cli_args.build_schema:
+            from cli.schema_refresh import refresh, SchemaRefreshError
 
-        try:
-            refresh(repo_root)
-        except (ValueError, OSError) as error:
-            message = (
-                str(error)
-                if isinstance(error, SchemaRefreshError)
-                else type(error).__name__
-            )
-            raise DeployError(f"Schema refresh failed: {message}") from None
-    if not cli_args.adopt_orphans:
-        cli_args = validate_local_artifacts(config, cli_args, logger)
-    validate_local_namespace(config, cli_args, logger)
-    maybe_prompt_for_missing_env_tokens(config, cli_args, logger)
+            try:
+                refresh(repo_root)
+            except (ValueError, OSError) as error:
+                message = (
+                    str(error)
+                    if isinstance(error, SchemaRefreshError)
+                    else type(error).__name__
+                )
+                raise DeployError(f"Schema refresh failed: {message}") from None
+        if not cli_args.adopt_orphans:
+            cli_args = validate_local_artifacts(config, cli_args, logger)
+        validate_local_namespace(config, cli_args, logger)
+        maybe_prompt_for_missing_env_tokens(config, cli_args, logger)
     otp_manager = OtpManager(config.otp_enabled)
     api_key, base_url = get_api_key_and_url()
     if not api_key or not base_url:
@@ -8885,9 +10256,16 @@ def main() -> int:
     # Verify the env file's pin against the live environment before so a mismatched env file never touches anything
     enforce_target_environment(client, target_env_id, env_file, logger)
     resume_state = ResumeState(
-        repo_root, load=cli_args.resume, target=(base_url, target_env_id)
+        repo_root,
+        load=cli_args.resume,
+        target=None if cli_args.why else (base_url, target_env_id),
+        read_only=cli_args.dry_run,
     )
 
+    if resume_state.pending_functions and not cli_args.dynamic:
+        raise DeployError(
+            "Resume the unfinished function tree with push-dynamic --resume"
+        )
     function_registry = fetch_function_registry(client)
     webhook_index: dict[tuple[str, str], dict[str, Any]] = {}
 
@@ -8912,6 +10290,17 @@ def main() -> int:
         )
         print_summary(summary, logger)
         return 0
+
+    dynamic_plan = None
+    if cli_args.dynamic:
+        dynamic_plan = plan_dynamic_functions(
+            client, config, cli_args, logger, resume_state
+        )
+        report.update(dynamic_plan_report(dynamic_plan, config, cli_args))
+        print_dynamic_report(report, cli_args, logger)
+        if cli_args.why:
+            return 0
+        confirm_dynamic_plan(dynamic_plan, config, cli_args)
 
     if "variables" in config.enabled_types:
         sync_variables(
@@ -8948,6 +10337,12 @@ def main() -> int:
         )
 
     if "functions" in config.enabled_types:
+        if cli_args.dynamic and summary_has_incomplete_work(summary):
+            logger.fail(
+                "Function step skipped because prerequisite resources failed or were blocked."
+            )
+            print_summary(summary, logger)
+            return 1
         function_registry, _ = sync_functions(
             client=client,
             config=config,
@@ -8955,7 +10350,11 @@ def main() -> int:
             logger=logger,
             summary=summary,
             resume_state=resume_state,
+            dynamic_plan=dynamic_plan,
         )
+        if cli_args.dynamic and summary_has_incomplete_work(summary):
+            print_summary(summary, logger)
+            return 1
 
     if "ai-functions" in config.enabled_types:
         sync_ai_functions(client, config, cli_args, logger, summary)
@@ -9038,7 +10437,8 @@ def main() -> int:
         logger.warn(f"Keeping {ResumeState.FILENAME} so the run can be resumed.")
         return 1
 
-    resume_state.clear()
+    if not cli_args.dry_run:
+        resume_state.clear()
     return 0
 
 
@@ -9046,8 +10446,7 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except KeyboardInterrupt:
-        print()
-        print("Cancelled.")
+        print("\nCancelled.", file=sys.stderr)
         raise SystemExit(130)
     except DeployError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

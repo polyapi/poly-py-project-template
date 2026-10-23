@@ -1,5 +1,4 @@
 import json
-from typing import Literal
 
 from polyapi import poly, vari
 from polyapi.config import get_direct_execute_config
@@ -13,7 +12,7 @@ polyConfig: PolyClientFunction = {
 }
 
 
-async def motd_client(mood: Literal["funny", "wise"]) -> str:
+async def motd_client(mood: str) -> str:
     if mood not in ("funny", "wise"):
         raise ValueError("Unsupported mood")
     if mood == "funny":

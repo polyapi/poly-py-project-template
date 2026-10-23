@@ -886,6 +886,7 @@ def test_first_deployment_dry_run_resolves_local_functions_webhook_and_job(setti
         {
             "/functions/server": [],
             "/functions/client": [],
+            "/specs": [],
             "/webhooks": [],
             "/triggers": [],
             "/jobs": [],

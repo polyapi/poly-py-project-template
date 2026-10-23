@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import importlib.util
 import json
 import os
@@ -66,7 +67,7 @@ from polyapi import poly, vari
 async def exchange_rates_orchestrator():
     sample_workflow_api = cast(Any, poly).example.sample_workflow
     await sample_workflow_api.update_occ_exchange_rates()
-    return vari.example.loggers.datadog.creds.dd_key.inject()
+    return vari.example.loggers.datadog.credentials.dd_key.inject()
 """
 
     contexts = poly_deploy.infer_generate_contexts(source)
@@ -94,12 +95,12 @@ from polyapi import poly
 
 async def worker():
     await poly.example.sample_workflow.update_occ_exchange_rates()
-    await poly.OOB.ohip.v2.fofcfg.setGlobalExchangeRates()
+    await poly.OOB.provider.v2.configuration.setGlobalExchangeRates()
 """
 
     contexts = poly_deploy.infer_generate_contexts(source, ("example.excluded",))
 
-    assert contexts == ["example.sample_workflow", "OOB.ohip.v2.fofcfg"]
+    assert contexts == ["example.sample_workflow", "OOB.provider.v2.configuration"]
 
 
 def test_infer_generate_contexts_scans_all_generated_polyapi_namespaces() -> None:
@@ -184,28 +185,28 @@ from typing import cast
 from typing_extensions import Any
 from polyapi import vari
 
-gravty_vari = cast(Any, vari).example.sample_workflow.gravty
-configuration = gravty_vari.configuration.get()
-api_key = gravty_vari.api_key.inject()
+service_vari = cast(Any, vari).example.sample_workflow.service
+configuration = service_vari.configuration.get()
+api_key = service_vari.api_key.inject()
 """
 
     contexts = poly_deploy.infer_generate_contexts(source, ("example.excluded",))
 
-    assert contexts == ["example.sample_workflow.gravty"]
+    assert contexts == ["example.sample_workflow.service"]
 
 
-def test_expand_vari_aliases_does_not_rewrite_operation_results() -> None:
+def test_vari_operation_results_are_not_sdk_aliases() -> None:
     source = """
 from polyapi import vari
 
-configuration = vari.example.sample_workflow.gravty.configuration.get()
+configuration = vari.example.sample_workflow.service.configuration.get()
 configuration.get("hostUrl")
 """
-
-    expanded = poly_deploy._expand_vari_aliases(source)
-
-    assert "vari.example.sample_workflow.gravty.configuration.get()" in expanded
-    assert "vari.example.sample_workflow.gravty.configuration.get.get" not in expanded
+    references = poly_deploy.inspect_polyapi_references(source)["vari"]
+    assert references == ["example.sample_workflow.service.configuration.get"]
+    assert poly_deploy.infer_generate_contexts(source, ("example.excluded",)) == [
+        "example.sample_workflow.service"
+    ]
 
 
 def test_infer_generate_contexts_rejects_unsafe_dynamic_vari_base() -> None:
@@ -263,10 +264,10 @@ async def worker():
 def test_infer_generate_contexts_supports_generated_submodule_imports() -> None:
     source = """
 from polyapi.schemas.example.records import MemberRecord
-from polyapi.tabi.example.tables import profile_links
+from polyapi.tabi.example.tables import profile_linksSelectOneQuery
 
 record_type = MemberRecord
-query_type = profile_links.SelectOneQuery
+query_type = profile_linksSelectOneQuery
 """
 
     contexts = poly_deploy.infer_generate_contexts(source, ("example.excluded",))
@@ -350,14 +351,14 @@ from typing import cast
 from typing_extensions import Any
 from polyapi import poly
 
-async def gravty_token_handler():
+async def service_token_handler():
     poly_runtime = cast(Any, poly)
-    return poly_runtime.example.gravty.currency.login()
+    return poly_runtime.example.service.currency.login()
 """
 
     contexts = poly_deploy.infer_generate_contexts(source, ("example.excluded",))
 
-    assert contexts == ["example.gravty.currency"]
+    assert contexts == ["example.service.currency"]
 
 
 def test_transitive_contexts_follow_cast_poly_alias_to_client_oob_context() -> None:
@@ -368,12 +369,14 @@ def test_transitive_contexts_follow_cast_poly_alias_to_client_oob_context() -> N
             assert method == "GET"
             if path == "/functions/server":
                 return [{"id": "server-1"}]
-            if path == "/functions/client":
+            if path == "/specs":
                 return [
                     {
                         "id": "client-1",
                         "context": "example.sample_workflow",
                         "name": "update_occ_exchange_rates",
+                        "type": "customFunction",
+                        "code": "\nfrom polyapi import poly\n\nasync def update_occ_exchange_rates():\n    return poly.OOB.provider.v2.configuration.setGlobalExchangeRates()\n",
                     }
                 ]
             if path == "/functions/server/server-1":
@@ -387,16 +390,6 @@ from polyapi import poly
 async def exchange_rates_orchestrator():
     sample_workflow_api = cast(Any, poly).example.sample_workflow
     await sample_workflow_api.update_occ_exchange_rates()
-""",
-                }
-            if path == "/functions/client/client-1":
-                return {
-                    "contextName": "example.sample_workflow.update_occ_exchange_rates",
-                    "code": """
-from polyapi import poly
-
-async def update_occ_exchange_rates():
-    return poly.OOB.ohip.v2.fofcfg.setGlobalExchangeRates()
 """,
                 }
             raise AssertionError(path)
@@ -415,7 +408,7 @@ async def update_occ_exchange_rates():
     assert poly_deploy.get_transitive_contexts(
         "example.sample_workflow.exchange_rates_orchestrator",
         func_context,
-    ) == ["example", "OOB.ohip"]
+    ) == ["example", "OOB.provider"]
 
 
 def test_transitive_contexts_exclude_context_before_namespace_collapse() -> None:
@@ -431,7 +424,7 @@ def test_transitive_contexts_exclude_context_before_namespace_collapse() -> None
                     {"id": "server-1", "context": "example.sample_workflow"},
                     {"id": "server-excluded", "context": "example.excluded.v1"},
                 ]
-            if path == "/functions/client":
+            if path == "/specs":
                 return []
             fetched_details.append(path)
             if path == "/functions/server/server-1":
@@ -442,7 +435,7 @@ from polyapi import poly
 
 async def exchange_rates_orchestrator():
     await poly.example.excluded.v1.memberships_create()
-    return await poly.OOB.ohip.v2.fofcfg.setGlobalExchangeRates()
+    return await poly.OOB.provider.v2.configuration.setGlobalExchangeRates()
 """,
                 }
             raise AssertionError(path)
@@ -464,7 +457,7 @@ async def exchange_rates_orchestrator():
         "example.sample_workflow.exchange_rates_orchestrator",
         func_context,
         ("example.excluded",),
-    ) == ["OOB.ohip.v2.fofcfg"]
+    ) == ["OOB.provider.v2.configuration"]
 
 
 def test_transitive_contexts_reach_datadog_send_through_logger_factory() -> None:
@@ -475,22 +468,28 @@ def test_transitive_contexts_reach_datadog_send_through_logger_factory() -> None
             assert method == "GET"
             if path == "/functions/server":
                 return [{"id": "server-1"}]
-            if path == "/functions/client":
+            if path == "/specs":
                 return [
                     {
                         "id": "get-logger",
                         "context": "example.utils.logger.datadog",
                         "name": "get_logger",
+                        "type": "customFunction",
+                        "code": "\nfrom polyapi import poly\n\nasync def get_logger():\n    logger: Logger = poly.example.utils.logger.datadog.init_logger(init_params)\n    return logger\n",
                     },
                     {
                         "id": "init-logger",
                         "context": "example.utils.logger.datadog",
                         "name": "init_logger",
+                        "type": "customFunction",
+                        "code": "\nfrom polyapi import poly\n\ndef init_logger():\n    send = poly.example.utils.logger.datadog.send\n    send([])\n",
                     },
                     {
                         "id": "send",
                         "context": "example.utils.logger.datadog",
                         "name": "send",
+                        "type": "customFunction",
+                        "code": "\nfrom polyapi import poly\n\nasync def send():\n    return await poly.OOB.datadog.logs.send_async()\n",
                     },
                 ]
             if path == "/functions/server/server-1":
@@ -501,38 +500,6 @@ from polyapi import poly
 
 async def exchange_rates_orchestrator():
     await poly.example.utils.logger.datadog.get_logger({})
-""",
-                }
-            if path == "/functions/client/get-logger":
-                return {
-                    "contextName": "example.utils.logger.datadog.get_logger",
-                    "code": """
-from polyapi import poly
-
-async def get_logger():
-    logger: Logger = poly.example.utils.logger.datadog.init_logger(init_params)
-    return logger
-""",
-                }
-            if path == "/functions/client/init-logger":
-                return {
-                    "contextName": "example.utils.logger.datadog.init_logger",
-                    "code": """
-from polyapi import poly
-
-def init_logger():
-    send = poly.example.utils.logger.datadog.send
-    send([])
-""",
-                }
-            if path == "/functions/client/send":
-                return {
-                    "contextName": "example.utils.logger.datadog.send",
-                    "code": """
-from polyapi import poly
-
-async def send():
-    return await poly.OOB.datadog.logs.send_async()
 """,
                 }
             raise AssertionError(path)
@@ -571,7 +538,7 @@ def test_local_transitive_contexts_include_datadog_logger_vari_dependencies(
 from polyapi import poly, vari
 
 async def worker() -> dict:
-    vari.example.loggers.datadog.creds.dd_key.inject()
+    vari.example.loggers.datadog.credentials.dd_key.inject()
     return await poly.example.utils.logger.datadog.get_logger({})
 """,
         encoding="utf-8",
@@ -664,12 +631,12 @@ def test_parse_function_spec_from_shell_line_resolves_parent_source(
     client_dir.mkdir(parents=True)
 
     script_path = deployment_dir / "deployment.sh"
-    source_path = client_dir / "get_ohip_access_token_cfx.py"
-    source_path.write_text("async def get_ohip_access_token():\n    return {}\n")
+    source_path = client_dir / "get_provider_access_token_cfx.py"
+    source_path.write_text("async def get_provider_access_token():\n    return {}\n")
 
     spec = poly_deploy.parse_function_spec_from_shell_line(
         script_path,
-        "python -m polyapi function add get_ohip_access_token ./client/get_ohip_access_token_cfx.py --context example.test --client",
+        "python -m polyapi function add get_provider_access_token ./client/get_provider_access_token_cfx.py --context example.test --client",
         1,
     )
 
@@ -854,14 +821,14 @@ def test_substitute_env_tokens_only_replaces_defined_values(
 
 def test_find_unresolved_env_tokens_only_matches_env_style_placeholders() -> None:
     payload = {
-        "config": "{{IDCS_HOST_URL}}",
+        "config": "{{IDENTITY_HOST_URL}}",
         "route": "GET_/profile/{{nameId}}",
         "functionId": "{{example.sample_workflow.job_dispatcher}}",
         "nested": ["{{RNA_OO_HOST_URL}}", "{{pageNo}}"],
     }
 
     assert poly_deploy.find_unresolved_env_tokens(payload) == {
-        "IDCS_HOST_URL",
+        "IDENTITY_HOST_URL",
         "RNA_OO_HOST_URL",
     }
 
@@ -885,7 +852,7 @@ def test_collapse_context_prefixes_removes_child_contexts() -> None:
         ("example.excluded", True),
         ("example.excluded.v1", True),
         ("example.excluded2", False),
-        ("example.excludedletter", False),
+        ("example.excludedExtra", False),
         ("OOB.excluded", False),
     ],
 )
@@ -905,7 +872,7 @@ def test_context_compaction_removes_children_under_safe_parent() -> None:
             "example.profiles.get_profile_matches",
             "example.profiles.nh_profile_notification",
             "example.loggers.datadog",
-            "example.loggers.datadog.creds",
+            "example.loggers.datadog.credentials",
             "OOB.datadog.logs",
         ],
         ("example.excluded",),
@@ -1779,7 +1746,7 @@ def test_build_variable_update_payload_keeps_non_empty_value() -> None:
     assert payload["value"] == "enabled"
 
 
-def test_load_function_specs_from_python_marks_polyconfig_description_explicit(
+def test_load_function_specs_from_python_marks_poly_config_description_explicit(
     tmp_path: Path,
 ) -> None:
     source_path = tmp_path / "worker_cfx.py"
@@ -1840,7 +1807,7 @@ def test_load_function_specs_from_python_reads_generate_contexts(
             "polyConfig: PolyServerFunction = {\n"
             '    "name": "router_handler",\n'
             '    "context": "example.utils.generic",\n'
-            '    "generate_contexts": ["OOB.datadog", "example", "OOB.ohip"],\n'
+            '    "generate_contexts": ["OOB.datadog", "example", "OOB.provider"],\n'
             "}\n\n"
             "def router_handler() -> dict:\n"
             "    return {}\n"
@@ -1851,7 +1818,7 @@ def test_load_function_specs_from_python_reads_generate_contexts(
     specs = poly_deploy.load_function_specs_from_python(source_path)
 
     assert len(specs) == 1
-    assert specs[0].generate_contexts == ("OOB.datadog", "example", "OOB.ohip")
+    assert specs[0].generate_contexts == ("OOB.datadog", "example", "OOB.provider")
 
 
 def test_load_function_specs_from_python_reads_generate_contexts_camel_case_csv(
@@ -1864,7 +1831,7 @@ def test_load_function_specs_from_python_reads_generate_contexts_camel_case_csv(
             "polyConfig: PolyServerFunction = {\n"
             '    "name": "router_handler",\n'
             '    "context": "example.utils.generic",\n'
-            '    "generateContexts": "OOB.datadog, example, OOB.ohip",\n'
+            '    "generateContexts": "OOB.datadog, example, OOB.provider",\n'
             "}\n\n"
             "def router_handler() -> dict:\n"
             "    return {}\n"
@@ -1875,7 +1842,7 @@ def test_load_function_specs_from_python_reads_generate_contexts_camel_case_csv(
     specs = poly_deploy.load_function_specs_from_python(source_path)
 
     assert len(specs) == 1
-    assert specs[0].generate_contexts == ("OOB.datadog", "example", "OOB.ohip")
+    assert specs[0].generate_contexts == ("OOB.datadog", "example", "OOB.provider")
 
 
 def test_build_function_payload_omits_missing_return_type_schema(
@@ -2293,9 +2260,12 @@ def test_build_function_payload_uses_filtered_context_graph_when_exclusions_conf
     remote_func_context = {
         "example.active.worker": {
             "calls": ["example.active.helper"],
-            "contexts": ["example.active", "OOB.ohip.v2.fofcfg"],
+            "contexts": ["example.active", "OOB.provider.v2.configuration"],
         },
-        "example.active.helper": {"calls": [], "contexts": ["OOB.ohip.v2.fofcfg"]},
+        "example.active.helper": {
+            "calls": [],
+            "contexts": ["OOB.provider.v2.configuration"],
+        },
     }
 
     monkeypatch.setattr(
@@ -2319,7 +2289,10 @@ def test_build_function_payload_uses_filtered_context_graph_when_exclusions_conf
         spec, remote_func_context, ("example.excluded",)
     )
 
-    assert payload["generateContexts"] == ["example.active", "OOB.ohip.v2.fofcfg"]
+    assert payload["generateContexts"] == [
+        "example.active",
+        "OOB.provider.v2.configuration",
+    ]
 
 
 def test_sync_function_group_logs_resolved_generate_contexts(
@@ -2341,7 +2314,7 @@ def test_sync_function_group_logs_resolved_generate_contexts(
     class DummyClient:
         def request(self, method: str, path: str, **_: object) -> list[dict[str, str]]:
             assert method == "GET"
-            if path in {"/functions/server", "/functions/client"}:
+            if path in {"/functions/server", "/specs"}:
                 return []
             raise AssertionError(path)
 
@@ -2434,9 +2407,12 @@ def test_sync_function_group_fails_before_mutation_for_unresolved_broad_context(
         def __init__(self) -> None:
             self.calls: list[tuple[str, str, dict[str, Any]]] = []
 
-        def request(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        def request(
+            self, method: str, path: str, **kwargs: Any
+        ) -> list[dict[str, Any]]:
             self.calls.append((method, path, kwargs))
-            return {}
+            assert (method, path) == ("GET", "/specs")
+            return []
 
     client = DummyClient()
     monkeypatch.setattr(poly_deploy, "get_execution_api_key", lambda: None)
@@ -2500,7 +2476,7 @@ def test_sync_function_group_fails_before_mutation_for_unresolved_broad_context(
             local_func_context={},
         )
 
-    assert client.calls == []
+    assert client.calls == [("GET", "/specs", {"params": {"noTypes": "true"}})]
 
 
 def test_sync_function_group_force_updates_unchanged_existing_function(
@@ -2925,7 +2901,7 @@ def test_collect_missing_env_token_refs_respects_scope_and_defined_values(
             "{\n"
             '  "name": "service_config",\n'
             '  "context": "example.sample_workflow",\n'
-            '  "value": {"host": "{{IDCS_HOST_URL}}", "tenant": "{{OKTA_TENANT_ID}}"}\n'
+            '  "value": {"host": "{{IDENTITY_HOST_URL}}", "tenant": "{{OKTA_TENANT_ID}}"}\n'
             "}\n"
         ),
         encoding="utf-8",
@@ -2936,7 +2912,7 @@ def test_collect_missing_env_token_refs_respects_scope_and_defined_values(
     )
 
     monkeypatch.setenv("DEFINED_ENV", "set")
-    monkeypatch.setenv("IDCS_HOST_URL", "https://example.com")
+    monkeypatch.setenv("IDENTITY_HOST_URL", "https://example.com")
     monkeypatch.delenv("OKTA_TENANT_ID", raising=False)
 
     config = poly_deploy.DeployConfig(
@@ -3296,7 +3272,7 @@ def test_build_deployment_preflight_does_not_mark_branch_derived_from_develop_as
     )
     monkeypatch.setattr(poly_deploy, "configured_production_branch", lambda: "main")
     monkeypatch.setattr(
-        poly_deploy, "current_git_branch", lambda _repo_root: "prodprep"
+        poly_deploy, "current_git_branch", lambda _repo_root: "release_prep"
     )
     monkeypatch.setattr(
         poly_deploy, "resolve_git_production_ref", lambda _repo_root, _branch: "main"
@@ -3401,7 +3377,7 @@ def test_build_deployment_preflight_exempts_configured_branch_and_descendants(
     monkeypatch.setenv("GIT_PROD_SKIP_BRANCHES", "develop")
     monkeypatch.setattr(poly_deploy, "configured_production_branch", lambda: "main")
     monkeypatch.setattr(
-        poly_deploy, "current_git_branch", lambda _repo_root: "prodprep"
+        poly_deploy, "current_git_branch", lambda _repo_root: "release_prep"
     )
     monkeypatch.setattr(
         poly_deploy, "resolve_git_production_ref", lambda _repo_root, _branch: "main"
@@ -3436,7 +3412,7 @@ def test_build_deployment_preflight_carries_expected_env_for_exempt_branch(
     )
     monkeypatch.setenv("GIT_PROD_SKIP_BRANCHES", "develop:dev.env")
     monkeypatch.setattr(
-        poly_deploy, "current_git_branch", lambda _repo_root: "prodprep"
+        poly_deploy, "current_git_branch", lambda _repo_root: "release_prep"
     )
     monkeypatch.setattr(
         poly_deploy, "resolve_git_production_ref", lambda _repo_root, _branch: "main"
@@ -3466,7 +3442,7 @@ def test_is_branch_directly_derived_from_production_rejects_closer_develop_ances
     monkeypatch.setattr(
         poly_deploy,
         "list_local_git_branches",
-        lambda _repo_root: ("main", "develop", "prodprep"),
+        lambda _repo_root: ("main", "develop", "release_prep"),
     )
 
     def fake_resolve_branch_base_commit(
@@ -3476,8 +3452,8 @@ def test_is_branch_directly_derived_from_production_rejects_closer_develop_ances
         head_ref: str = "HEAD",
     ) -> str | None:
         mapping = {
-            ("main", "prodprep"): "base-main",
-            ("develop", "prodprep"): "base-develop",
+            ("main", "release_prep"): "base-main",
+            ("develop", "release_prep"): "base-develop",
             ("main", "HEAD"): "base-main",
             ("develop", "HEAD"): "base-develop",
         }
@@ -3490,8 +3466,8 @@ def test_is_branch_directly_derived_from_production_rejects_closer_develop_ances
         poly_deploy,
         "commits_since_base",
         lambda _repo_root, base_commit, *, head_ref="HEAD": {
-            ("base-main", "prodprep"): 12,
-            ("base-develop", "prodprep"): 2,
+            ("base-main", "release_prep"): 12,
+            ("base-develop", "release_prep"): 2,
             ("base-main", "HEAD"): 12,
             ("base-develop", "HEAD"): 2,
         }[(base_commit, head_ref)],
@@ -3500,7 +3476,7 @@ def test_is_branch_directly_derived_from_production_rejects_closer_develop_ances
     assert (
         poly_deploy.is_branch_directly_derived_from_production(
             tmp_path,
-            current_branch="prodprep",
+            current_branch="release_prep",
             production_branch="main",
             production_ref="main",
         )
@@ -3515,7 +3491,7 @@ def test_nearest_ancestor_branch_returns_closest_local_branch(
     monkeypatch.setattr(
         poly_deploy,
         "list_local_git_branches",
-        lambda _repo_root: ("main", "develop", "prodprep"),
+        lambda _repo_root: ("main", "develop", "release_prep"),
     )
 
     def fake_resolve_branch_base_commit(
@@ -3525,8 +3501,8 @@ def test_nearest_ancestor_branch_returns_closest_local_branch(
         head_ref: str = "HEAD",
     ) -> str | None:
         mapping = {
-            ("main", "prodprep"): "base-main",
-            ("develop", "prodprep"): "base-develop",
+            ("main", "release_prep"): "base-main",
+            ("develop", "release_prep"): "base-develop",
         }
         return mapping.get((branch_ref, head_ref))
 
@@ -3537,16 +3513,16 @@ def test_nearest_ancestor_branch_returns_closest_local_branch(
         poly_deploy,
         "commits_since_base",
         lambda _repo_root, base_commit, *, head_ref="HEAD": {
-            ("base-main", "prodprep"): 12,
-            ("base-develop", "prodprep"): 2,
+            ("base-main", "release_prep"): 12,
+            ("base-develop", "release_prep"): 2,
         }[(base_commit, head_ref)],
     )
 
     assert (
         poly_deploy.nearest_ancestor_branch(
             tmp_path,
-            current_branch="prodprep",
-            head_ref="prodprep",
+            current_branch="release_prep",
+            head_ref="release_prep",
         )
         == "develop"
     )
@@ -3559,7 +3535,7 @@ def test_branch_ancestor_chain_walks_back_through_nearest_ancestors(
     monkeypatch.setattr(
         poly_deploy,
         "list_local_git_branches",
-        lambda _repo_root: ("main", "develop", "prodprep"),
+        lambda _repo_root: ("main", "develop", "release_prep"),
     )
 
     def fake_resolve_branch_base_commit(
@@ -3569,8 +3545,8 @@ def test_branch_ancestor_chain_walks_back_through_nearest_ancestors(
         head_ref: str = "HEAD",
     ) -> str | None:
         mapping = {
-            ("main", "prodprep"): "base-main-prodprep",
-            ("develop", "prodprep"): "base-develop-prodprep",
+            ("main", "release_prep"): "base-main-release_prep",
+            ("develop", "release_prep"): "base-develop-release_prep",
             ("main", "develop"): "base-main-develop",
         }
         return mapping.get((branch_ref, head_ref))
@@ -3582,15 +3558,15 @@ def test_branch_ancestor_chain_walks_back_through_nearest_ancestors(
         poly_deploy,
         "commits_since_base",
         lambda _repo_root, base_commit, *, head_ref="HEAD": {
-            ("base-main-prodprep", "prodprep"): 12,
-            ("base-develop-prodprep", "prodprep"): 2,
+            ("base-main-release_prep", "release_prep"): 12,
+            ("base-develop-release_prep", "release_prep"): 2,
             ("base-main-develop", "develop"): 4,
         }[(base_commit, head_ref)],
     )
 
     assert poly_deploy.branch_ancestor_chain(
         tmp_path,
-        current_branch="prodprep",
+        current_branch="release_prep",
     ) == ("develop", "main")
 
 
@@ -3603,7 +3579,7 @@ def test_production_safeguards_triggered_skips_dry_run_and_adopt_orphans() -> No
             from_envpath=False,
         ),
         production_branch="main",
-        current_branch="prodprep",
+        current_branch="release_prep",
         production_sensitive=True,
         current_branch_parent="main",
         sensitive_reason="current branch is directly derived from the configured production branch",
@@ -3668,7 +3644,7 @@ def test_print_deployment_visibility_matches_expected_order_for_non_prod_branch(
             from_envpath=False,
         ),
         production_branch="main",
-        current_branch="prodprep",
+        current_branch="release_prep",
         production_sensitive=False,
         current_branch_parent="develop",
     )
@@ -3693,7 +3669,7 @@ def test_print_deployment_visibility_matches_expected_order_for_non_prod_branch(
     assert lines == [
         "env file: .env (missing, not loaded)",
         "target environment: env-abc123",
-        "current git branch: prodprep (branch of develop)",
+        "current git branch: release_prep (branch of develop)",
         "production branch: main",
         "production safeguards: not triggered",
     ]
@@ -3710,7 +3686,7 @@ def test_print_deployment_visibility_includes_exemption_reason(
             from_envpath=False,
         ),
         production_branch="main",
-        current_branch="prodprep",
+        current_branch="release_prep",
         production_sensitive=False,
         current_branch_parent="develop",
         safeguard_exemption_reason="derived from exempt branch develop",
@@ -3736,7 +3712,7 @@ def test_print_deployment_visibility_includes_exemption_reason(
     assert lines == [
         "env file: .env",
         "target environment: env-abc123",
-        "current git branch: prodprep (branch of develop)",
+        "current git branch: release_prep (branch of develop)",
         "production branch: main",
         "production safeguards: not triggered (derived from exempt branch develop)",
     ]
@@ -3751,7 +3727,7 @@ def test_enforce_production_safeguards_requires_exec_key_when_triggered() -> Non
             from_envpath=False,
         ),
         production_branch="main",
-        current_branch="prodprep",
+        current_branch="release_prep",
         production_sensitive=True,
     )
     cli_args = poly_deploy.CliArgs(
@@ -3779,7 +3755,7 @@ def test_enforce_production_safeguards_requires_exact_prod_confirmation(
             from_envpath=False,
         ),
         production_branch="main",
-        current_branch="prodprep",
+        current_branch="release_prep",
         production_sensitive=True,
     )
     cli_args = poly_deploy.CliArgs(
@@ -4137,7 +4113,7 @@ def test_load_function_specs_from_python_skips_excluded_context_before_parse(
     assert specs == []
 
 
-def test_load_function_specs_from_python_uses_polyconfig_without_importing(
+def test_load_function_specs_from_python_uses_poly_config_without_importing(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
 ) -> None:
@@ -4559,7 +4535,7 @@ def test_maybe_prompt_for_missing_env_tokens_can_continue(
         "collect_missing_env_token_refs",
         lambda _config, _cli_args: [
             poly_deploy.MissingEnvTokenRef(
-                env_name="IDCS_HOST_URL",
+                env_name="IDENTITY_HOST_URL",
                 path=repo_root
                 / "workflows/src"
                 / "sample_workflow"
@@ -4622,7 +4598,7 @@ def test_maybe_prompt_for_missing_env_tokens_stops_in_non_interactive_mode(
             "collect_missing_env_token_refs",
             lambda _config, _cli_args: [
                 poly_deploy.MissingEnvTokenRef(
-                    env_name="IDCS_HOST_URL",
+                    env_name="IDENTITY_HOST_URL",
                     path=repo_root
                     / "workflows/src"
                     / "sample_workflow"
@@ -5015,9 +4991,13 @@ def test_process_orphans_adopts_variable_locally_using_context_mapping(
     }
 
 
+@pytest.mark.parametrize("remote_secrecy", ["SECRET", "OBSCURED", "PARTIAL"])
+@pytest.mark.parametrize("allow_value_update", [False, True])
 def test_sync_variables_recreate_on_secrecy_change_uses_otp_headers(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
+    allow_value_update: bool,
+    remote_secrecy: str,
 ) -> None:
     repo_root = tmp_path
     variable_dir = repo_root / "workflows/src" / "playground" / "artefacts" / "vari"
@@ -5028,8 +5008,9 @@ def test_sync_variables_recreate_on_secrecy_change_uses_otp_headers(
             {
                 "context": "example.test",
                 "name": "config",
-                "value": "updated",
+                "value": {"clientSecret": "synthetic-new"},
                 "secret": False,
+                "secrecy": "NONE",
             }
         ),
         encoding="utf-8",
@@ -5049,7 +5030,7 @@ def test_sync_variables_recreate_on_secrecy_change_uses_otp_headers(
         trigger_globs=(),
         use_mtime_guard=True,
         remote_timestamp_fields=("createdAt",),
-        update_existing_secret_variables=False,
+        update_existing_secret_variables=allow_value_update,
         recreate_variables_on_secrecy_change=True,
         generate_after_function_sync=True,
         generate_contexts=(),
@@ -5083,10 +5064,14 @@ def test_sync_variables_recreate_on_secrecy_change_uses_otp_headers(
                     "id": "var-1",
                     "context": "example.test",
                     "name": "config",
-                    "value": "original",
-                    "secret": True,
+                    "value": {"clientSecret": "********"},
+                    "secret": remote_secrecy == "SECRET",
+                    "secrecy": remote_secrecy,
                 }
             if method == "PATCH" and path == "/variables/var-1":
+                payload = kwargs["payload"]
+                assert isinstance(payload, dict)
+                assert ("value" in payload) is allow_value_update
                 raise poly_deploy.ApiError(
                     "PATCH", path, 400, secrecy_change_rejected=True
                 )
@@ -5110,8 +5095,13 @@ def test_sync_variables_recreate_on_secrecy_change_uses_otp_headers(
         resume_state=poly_deploy.ResumeState(tmp_path, load=False),
     )
 
-    assert ("DELETE", "/variables/var-1", {"x-otp": "123456"}) in requests
-    assert summary.variables.updated == 1
+    if allow_value_update:
+        assert ("DELETE", "/variables/var-1", {"x-otp": "123456"}) in requests
+        assert summary.variables.updated == 1
+    else:
+        assert not any(method in {"DELETE", "POST"} for method, _, _ in requests)
+        assert summary.variables.failed == 1
+        assert summary.variables.updated == 0
 
 
 def test_sync_variables_force_updates_unchanged_non_secret_variable(
@@ -5365,8 +5355,10 @@ def test_sync_variables_creates_new_obscured_variable_with_value(
     assert summary.variables.created == 1
 
 
+@pytest.mark.parametrize("allow_value_update", [False, True])
 def test_sync_variables_force_updates_existing_obscured_variable(
     tmp_path: Path,
+    allow_value_update: bool,
 ) -> None:
     repo_root = tmp_path
     variable_dir = repo_root / "workflows/src" / "playground" / "artefacts" / "vari"
@@ -5398,7 +5390,7 @@ def test_sync_variables_force_updates_existing_obscured_variable(
         trigger_globs=(),
         use_mtime_guard=True,
         remote_timestamp_fields=("updatedAt",),
-        update_existing_secret_variables=False,
+        update_existing_secret_variables=allow_value_update,
         recreate_variables_on_secrecy_change=True,
         generate_after_function_sync=True,
         generate_contexts=(),
@@ -5458,7 +5450,7 @@ def test_sync_variables_force_updates_existing_obscured_variable(
         {
             "context": "example.test",
             "name": "token",
-            "value": "updated-token",
+            **({"value": "updated-token"} if allow_value_update else {}),
             "secrecy": "OBSCURED",
         }
     ]
@@ -6000,7 +5992,7 @@ def test_build_local_job_document_rewrites_server_function_ids_to_context_and_na
                     "id": "fn-job-dispatcher",
                     "headersPayload": {"min_status_log_override": "debug"},
                     "eventPayload": {},
-                    "paramsPayload": {"inclGravtyMemTrx": "N"},
+                    "paramsPayload": {"includeTransactions": "N"},
                 }
             ],
             "executionType": "sequential",
@@ -6016,7 +6008,7 @@ def test_build_local_job_document_rewrites_server_function_ids_to_context_and_na
                 "functionName": "job_dispatcher",
                 "headersPayload": {"min_status_log_override": "debug"},
                 "eventPayload": {},
-                "paramsPayload": {"inclGravtyMemTrx": "N"},
+                "paramsPayload": {"includeTransactions": "N"},
             }
         ],
         "executionType": "sequential",
@@ -6103,7 +6095,7 @@ def test_normalize_job_subset_ignores_unreported_empty_and_default_fields() -> N
     assert local == remote
 
 
-def test_normalize_job_subset_ignores_non_round_trippable_execution_controls() -> None:
+def test_normalize_job_subset_ignores_unreported_execution_limits() -> None:
     local, remote = poly_deploy.normalize_job_subset(
         {
             "name": "example.ra.put_extracts_job",
@@ -7170,14 +7162,14 @@ def test_current_python_source_seeds_transitive_sdk_dependencies(tmp_path):
     code = (
         "from polyapi import poly\n"
         "async def worker() -> dict:\n"
-        "    await poly.newapi.v2.fetch_async()\n"
+        "    await poly.new_api.v2.fetch_async()\n"
         "    await poly.other.remote.run_async()\n"
         "    return await poly.shared.helpers.start()\n"
     )
     path.write_text(code)
     spec = poly_deploy.FunctionSpec("worker", "example.demo", "server", path, path)
     stale = {
-        "example.demo.worker": {"calls": ["oldapi.v1.fetch"], "contexts": ["oldapi"]},
+        "example.demo.worker": {"calls": ["old_api.v1.fetch"], "contexts": ["old_api"]},
         "shared.helpers.start": {
             "calls": ["shared.helpers.finish"],
             "contexts": ["shared"],
@@ -7187,7 +7179,7 @@ def test_current_python_source_seeds_transitive_sdk_dependencies(tmp_path):
     # This uses the real pinned Python SDK parser, including the generated-import fallback.
     payload = poly_deploy.build_function_payload(spec, stale)
     assert payload["language"] == "python"
-    assert set(payload["generateContexts"]) == {"newapi", "other", "shared", "vendor"}
+    assert set(payload["generateContexts"]) == {"new_api", "other", "shared", "vendor"}
     fetched = []
     writes = []
 
@@ -7202,60 +7194,52 @@ def test_current_python_source_seeds_transitive_sdk_dependencies(tmp_path):
             if route == "/functions/server/worker":
                 return {
                     "id": "worker",
-                    "code": "from polyapi import poly\nasync def worker() -> dict:\n    return await poly.oldapi.v1.fetch_async()\n",
+                    "code": "from polyapi import poly\nasync def worker() -> dict:\n    return await poly.old_api.v1.fetch_async()\n",
                 }
-            if route == "/functions/client":
+            if route == "/specs":
                 return [
                     {
                         "id": "start",
                         "context": "shared.helpers",
                         "name": "start",
                         "language": "python",
+                        "type": "customFunction",
+                        "code": "from polyapi import poly\nasync def start():\n    return await poly.shared.helpers.finish()\n",
                     },
                     {
                         "id": "finish",
                         "context": "shared.helpers",
                         "name": "finish",
                         "language": "python",
+                        "type": "customFunction",
+                        "code": "from polyapi import poly\nasync def finish():\n    await poly.shared.helpers.start()\n    return await poly.vendor.v1.fetch_async()\n",
                     },
                     {
                         "id": "unrelated-ts",
                         "context": "elsewhere",
                         "name": "helper",
                         "language": "typescript",
+                        "type": "customFunction",
                     },
                     {
                         "id": "unrelated-broken",
                         "context": "elsewhere",
                         "name": "broken",
                         "language": "python",
+                        "type": "customFunction",
                     },
                 ]
-            if route == "/functions/client/start":
-                return {
-                    "language": "python",
-                    "code": "from polyapi import poly\nasync def start():\n    return await poly.shared.helpers.finish()\n",
-                }
-            if route == "/functions/client/finish":
-                return {
-                    "language": "python",
-                    "code": "from polyapi import poly\nasync def finish():\n    await poly.shared.helpers.start()\n    return await poly.vendor.v1.fetch_async()\n",
-                }
             pytest.fail(f"Unexpected remote implementation fetch: {route}")
 
     local = poly_deploy.build_local_func_context([spec])
     graph = poly_deploy.build_remote_func_context(Client(), local_func_context=local)
     assert poly_deploy.resolve_server_generate_contexts(spec, code, graph, ()) == [
-        "newapi",
+        "new_api",
         "other",
         "shared",
         "vendor",
     ]
-    assert fetched == [
-        "/functions/client",
-        "/functions/client/start",
-        "/functions/client/finish",
-    ]
+    assert fetched == ["/specs"]
     # Explicit contexts remain authoritative.
     explicit = poly_deploy.replace(spec, generate_contexts=("selected",))
     assert poly_deploy.resolve_server_generate_contexts(explicit, code, graph, ()) == [
@@ -7282,35 +7266,49 @@ def test_current_python_source_seeds_transitive_sdk_dependencies(tmp_path):
     )
     assert stats.updated == 1 and stats.failed == 0
     assert len(writes) == 1
-    assert set(writes[0]["generateContexts"]) == {"newapi", "other", "shared", "vendor"}
+    assert set(writes[0]["generateContexts"]) == {
+        "new_api",
+        "other",
+        "shared",
+        "vendor",
+    }
 
 
-@pytest.mark.parametrize("metadata_in_list", [True, False])
-def test_remote_dependency_discovery_respects_language(metadata_in_list):
+@pytest.mark.parametrize("language", ["python", "typescript", None])
+def test_remote_dependency_discovery_respects_language(language):
     calls = []
 
     class Client:
-        def request(self, method, path):
+        def request(self, method, path, **options):
+            assert (method, path, options) == (
+                "GET",
+                "/specs",
+                {"params": {"noTypes": "true"}},
+            )
             calls.append(path)
-            if path == "/functions/client":
-                return [
-                    {
-                        "id": "ts",
-                        "name": "helper",
-                        "context": "shared",
-                        **({"language": "typescript"} if metadata_in_list else {}),
-                    }
-                ]
-            assert path == "/functions/client/ts"
-            return {
-                "language": "typescript",
-                "code": "export function helper() { return true; }",
-            }
+            return [
+                {
+                    "id": "helper",
+                    "type": "customFunction",
+                    "name": "helper",
+                    "context": "shared",
+                    **({"language": language} if language is not None else {}),
+                    "code": (
+                        "export function helper() { return true; }"
+                        if language == "typescript"
+                        else "def helper():\n    return True\n"
+                    ),
+                }
+            ]
 
     local = {"example.worker": {"calls": ["shared.helper"], "contexts": ["shared"]}}
     graph = poly_deploy.build_remote_func_context(Client(), local_func_context=local)
-    assert graph == local
-    assert len(calls) == (1 if metadata_in_list else 2)
+    if language == "typescript":
+        assert graph == local
+    else:
+        assert graph["shared.helper"]["kind"] == "client"
+        assert graph["shared.helper"]["calls"] == []
+    assert calls == ["/specs"]
 
 
 @pytest.mark.parametrize(
@@ -7438,7 +7436,7 @@ def test_environment_execution_api_key_reaches_only_server_deployments(
 
     class Client:
         def request(self, method: str, route: str, **options: Any) -> Any:
-            if method == "GET" and route == "/functions/client":
+            if method == "GET" and route == "/specs":
                 return []
             assert (method, route) == ("POST", f"/functions/{function_type}")
             payloads.append(options["payload"])
@@ -7464,3 +7462,187 @@ def test_environment_execution_api_key_reaches_only_server_deployments(
         assert payloads[0]["executionApiKey"] == "execution-key-for-test"
     else:
         assert "executionApiKey" not in payloads[0]
+
+
+@pytest.mark.parametrize("secrecy", ["OBSCURED", "SECRET", "PARTIAL"])
+@pytest.mark.parametrize("protected_side", ["local", "remote"])
+@pytest.mark.parametrize("allowed", [False, True])
+def test_protected_variable_update_values_require_explicit_opt_in(
+    secrecy, protected_side, allowed
+):
+    local = {"context": "example", "name": "config", "value": "synthetic-new"}
+    remote = {"value": "synthetic-old"}
+    (local if protected_side == "local" else remote)["secrecy"] = secrecy
+    result = poly_deploy.build_variable_update_payload(
+        local, remote, update_secret_values=allowed
+    )
+    assert ("value" in result) is allowed
+    assert result["name"] == "config"
+    assert local["value"] == "synthetic-new"
+    assert remote["value"] == "synthetic-old"
+
+
+@pytest.mark.parametrize("allow_value_update", [False, True])
+@pytest.mark.parametrize("force", [False, True])
+@pytest.mark.parametrize("local_secrecy", [None, "PARTIAL"])
+def test_sync_variables_preserves_partial_values_unless_opted_in(
+    tmp_path: Path, allow_value_update: bool, force: bool, local_secrecy: str | None
+) -> None:
+    path = tmp_path / "workflows/src/demo/artefacts/vari/settings.json"
+    path.parent.mkdir(parents=True)
+    document = {
+        "context": "example.demo",
+        "name": "settings",
+        "description": "Updated metadata",
+        "value": {"clientSecret": "synthetic-new", "public": "new"},
+    }
+    if local_secrecy is not None:
+        document["secrecy"] = local_secrecy
+    path.write_text(json.dumps(document))
+    args = poly_deploy.CliArgs(False, force, False, False, (), ("variables",), False)
+    config = replace(
+        poly_deploy.build_config(tmp_path, args),
+        use_mtime_guard=False,
+        update_existing_secret_variables=allow_value_update,
+    )
+    writes: list[dict[str, Any]] = []
+
+    class Client:
+        def request(self, method: str, route: str, **options: Any) -> Any:
+            if method == "GET" and route == "/variables":
+                return [{"id": "var-1", "context": "example.demo", "name": "settings"}]
+            if method == "GET" and route == "/variables/var-1":
+                return {
+                    "id": "var-1",
+                    "context": "example.demo",
+                    "name": "settings",
+                    "description": "Original metadata",
+                    "secrecy": "PARTIAL",
+                    "secret": False,
+                    "value": {"clientSecret": "********", "public": "old"},
+                }
+            assert (method, route) == ("PATCH", "/variables/var-1")
+            writes.append(options["payload"])
+            return {"id": "var-1"}
+
+    summary = poly_deploy.Summary()
+    poly_deploy.sync_variables(
+        client=Client(),
+        config=config,
+        cli_args=args,
+        logger=poly_deploy.Logger(False),
+        summary=summary,
+        otp_manager=poly_deploy.OtpManager(False),
+        resume_state=poly_deploy.ResumeState(tmp_path, False),
+    )
+    assert summary.variables.updated == 1
+    assert summary.variables.failed == 0
+    assert len(writes) == 1
+    assert writes[0]["description"] == "Updated metadata"
+    assert ("value" in writes[0]) is allow_value_update
+    if allow_value_update:
+        assert writes[0]["value"] == document["value"]
+    assert json.loads(path.read_text()) == document
+
+
+def test_async_client_contexts_use_current_source_and_respect_exclusions(tmp_path):
+    path = tmp_path / "worker_sfx.py"
+    path.write_text(
+        "from polyapi import poly\n"
+        "async def worker() -> bool:\n"
+        "    return await poly.shared.helpers.fetch_async()\n"
+    )
+    spec = poly_deploy.FunctionSpec("worker", "example.demo", "server", path, path)
+    contexts = {
+        "example.demo.worker": {"calls": ["stale.helper"], "contexts": ["stale"]},
+        "stale.helper": {"calls": [], "contexts": ["stale"]},
+        "shared.helpers.fetch": {"calls": [], "contexts": ["wrong"]},
+        "shared.helpers.fetch_async": {
+            "calls": [],
+            "contexts": ["vendor.allowed", "vendor.excluded"],
+        },
+    }
+    payload = poly_deploy.build_function_payload(spec, contexts, ("vendor.excluded",))
+    assert set(payload["generateContexts"]) == {"shared.helpers", "vendor.allowed"}
+    path.write_text("async def worker() -> bool:\n    return True\n")
+    assert "generateContexts" not in poly_deploy.build_function_payload(
+        spec, contexts, ("vendor.excluded",)
+    )
+
+
+def test_remote_async_client_names_keep_exact_transitive_dependencies(tmp_path):
+    fetched = []
+
+    class Client:
+        def request(self, method, route, **options):
+            assert (method, route, options) == (
+                "GET",
+                "/specs",
+                {"params": {"noTypes": "true"}},
+            )
+            fetched.append(route)
+            codes = {
+                "fetch": "unreferenced invalid Python",
+                "fetch_async": "from polyapi import poly\nasync def fetch_async():\n    return await poly.shared.helpers.finish_async()\n",
+                "finish_async": "from polyapi import vari\nasync def finish_async():\n    return await vari.OOB.provider.settings.get_async()\n",
+            }
+            return [
+                {
+                    "id": name,
+                    "name": name,
+                    "context": "shared.helpers",
+                    "type": "customFunction",
+                    "language": "python",
+                    "code": code,
+                }
+                for name, code in codes.items()
+            ]
+
+    path = tmp_path / "worker_sfx.py"
+    path.write_text(
+        "from polyapi import poly\n"
+        "async def worker() -> bool:\n"
+        "    return await poly.shared.helpers.fetch_async()\n"
+    )
+    spec = poly_deploy.FunctionSpec("worker", "example.demo", "server", path, path)
+    local = poly_deploy.build_local_func_context([spec])
+    contexts = poly_deploy.build_remote_func_context(Client(), local_func_context=local)
+    payload = poly_deploy.build_function_payload(spec, contexts)
+    assert set(payload["generateContexts"]) == {"shared", "OOB.provider"}
+    assert fetched == ["/specs"]
+
+
+@pytest.mark.parametrize("reader", ["helper", "tuple", "lexical", "module-alias"])
+@pytest.mark.parametrize("variable_name", ["setting", "get"])
+def test_vari_lexical_bindings_keep_scoped_generation(reader, variable_name):
+    bodies = {
+        "helper": f"def read(v):\n    return v.get()\nread(vari.catalog.{variable_name})\n",
+        "tuple": f"v, = (vari.catalog.{variable_name},)\nv.get()\n",
+        "lexical": (
+            f"def read():\n    v = vari.catalog.{variable_name}\n    return v.get()\n"
+            "def other():\n    v = vari.catalog.other.setting\n    return v.inject()\n"
+        ),
+        "module-alias": f"v = vari\nv.catalog.{variable_name}.get()\n",
+    }
+    source = "from polyapi import vari\n" + bodies[reader]
+    found = poly_deploy.scan_function_dependencies("", source, ("private",))
+    assert found["root_variables"] == []
+    assert set(found["contexts"]) == (
+        {"catalog", "catalog.other"} if reader == "lexical" else {"catalog"}
+    )
+
+
+@pytest.mark.parametrize("reader", ["helper", "tuple", "lexical"])
+def test_vari_dynamic_context_guards_follow_lexical_bindings(reader):
+    sources = {
+        "helper": "def read(v):\n    return getattr(v, name).get()\nread(vari.example)\n",
+        "tuple": "v, = (vari.example,)\ngetattr(v, name).get()\n",
+        "lexical": (
+            "def read():\n    v = vari.example\n    return getattr(v, name).get()\n"
+            "def other():\n    v = vari.safe\n    return getattr(v, name).get()\n"
+        ),
+    }
+    with pytest.raises(poly_deploy.DeployError, match="broad context 'example'"):
+        poly_deploy.infer_generate_contexts(
+            "from polyapi import vari\n" + sources[reader], ("example.excluded",)
+        )

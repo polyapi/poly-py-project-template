@@ -14,16 +14,16 @@ and strict output schema: `location`, `currentWeather`, `description`,
 `recommendedItems`, and `upliftingMessage`. Verify that the target provides the
 two AccuWeather functions and the configured model/provider before deployment.
 
-```fish
-env ENVPATH=workflows/dev.env uv run --locked python cli/flow.py push --paths sample_ai_fx --types variables,ai-functions --dry-run
-env ENVPATH=workflows/dev.env uv run --locked python cli/flow.py push --paths sample_ai_fx --types variables,ai-functions
+```bash
+ENVPATH=workflows/dev.env uv run --locked python cli/flow.py push --paths sample_ai_fx --types variables,ai-functions --dry-run
+ENVPATH=workflows/dev.env uv run --locked python cli/flow.py push --paths sample_ai_fx --types variables,ai-functions
 ```
 
 The runtime test is separately gated because invoking the AI function can incur
 provider usage. It needs both opt-ins and an already configured target:
 
-```fish
-env RUN_POLY_INTEGRATION=true RUN_AI_INTEGRATION=true uv run --locked --env-file workflows/dev.env pytest workflows/src/sample_ai_fx/tests/test_weather_integration.py
+```bash
+RUN_POLY_INTEGRATION=true RUN_AI_INTEGRATION=true uv run --locked --env-file workflows/dev.env pytest workflows/src/sample_ai_fx/tests/test_weather_integration.py
 ```
 
 Local tests validate the tool/secret bindings and payload schema without invoking

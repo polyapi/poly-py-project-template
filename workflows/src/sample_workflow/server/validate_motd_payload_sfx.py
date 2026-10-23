@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Dict
 
 from polyapi.typedefs import PolyServerFunction
 
@@ -11,7 +11,7 @@ polyConfig: PolyServerFunction = {
 
 
 def validate_motd_payload(
-    event: dict[str, Any], headers: dict[str, str], params: dict[str, str]
+    event: Dict[str, Any], headers: Dict[str, str], params: Dict[str, str]
 ) -> bool:
     if not isinstance(event, dict):
         return False

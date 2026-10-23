@@ -1,48 +1,106 @@
 ---
 name: generate-overview
-description: Create or refresh a workflow or utility OVERVIEW.md from its Python source, PolyAPI artefacts, and focused tests when runtime behavior changes.
+description: Create or refresh a same-folder `OVERVIEW.md` for
+  `src/<workflow>` or `src/utilities/<utility_name>` after behavior-changing
+  edits. Use when server or client code, artefacts, deployment files, local
+  scripts, Vari, TABI, or shared utility behavior changes and the overview must
+  stay aligned.
+compatibility: Aligned to this repo's current PolyAPI workflow layout and the
+  local reference file in this skill directory.
 ---
 
-# Workflow overview maintenance
+# Skill: Generate Overview
 
-Update the smallest workflow or utility folder that owns the changed behavior
-under `workflows/src/`. Use its `OVERVIEW.md`; do not create a second guide for
-the same flow. Formatting-only edits do not require an overview rewrite.
+Resolve the workflow root from the active repo first. In the rules and examples
+below, substitute that root for `src/` (for example, `workflows/src/`).
 
-## Inspect the actual flow
+Use this skill to create or refresh authoritative `OVERVIEW.md` files for
+runtime-owned folders in this repository.
 
-- Read deployable entrypoints, `polyConfig`, relevant client calls, and the
-  artefacts that connect them. Follow shared utilities when their behavior
-  changes the result, error handling, logging, caching, or external effects.
-- Use code and artefacts as the primary evidence, tests as confirmation, and
-  existing prose as secondary context. Distinguish verified local behavior
-  from target-dependent setup and unverified runtime assumptions.
-- Read only safe source and configuration examples. Never inspect real
-  environment files, SDK credential stores, or customer payloads for examples.
+This skill should stay aligned with `./references/REFERENCE.md`.
 
-## Write what a maintainer needs
+## When To Use
 
-Include the pieces relevant to this workflow, without empty sections:
+Use this skill when:
 
-- Purpose and callable entrypoints, with a small flow diagram if useful.
-- Inputs, outputs, HTTP status behavior, validation, and handled failures.
-- SDK dependencies and exact resource contexts; explain important client and
-  utility behavior instead of treating them as unexplained boxes.
-- Required configuration names and secrecy levels, injection boundaries, and
-  the intended enabled state of jobs or streams. Use placeholders only.
-- External effects, retry/idempotency behavior, and operational limits that
-  affect safe use.
-- Focused local test commands and separately labeled opt-in runtime checks.
+- a new workflow is created under `src/<workflow_name>/`
+- a new utility is created under `src/utilities/<utility_name>/`
+- behavior changes in `server/`, `client/`, `artefacts/`, `deployment/`, or
+  folder-local `scripts/`
+- shared utility behavior changes and the utility overview should be updated
+- a workflow or utility overview is missing or obviously stale
 
-Link source files with relative Markdown links that resolve from the overview.
-Use repository-root Fish commands, and link the [root setup guide](../../../README.md)
-and [Flow reference](../../../cli/README.md) rather than copying their full setup
-or deployment procedures. Describe behavior independently of other projects or
-languages; do not add customer-specific assumptions to a generic workflow.
+Usually skip a full overview refresh for:
 
-## Finish
+- formatting-only changes
+- comment-only changes
+- root documentation changes
+- tooling changes with no runtime behavior effect
 
-Verify names, paths, defaults, and commands against the current source. Check
-every local link. State which checks were actually run and what still depends
-on a configured environment. Do not infer successful deployment from passing
-unit tests, or run a deployment to make documentation claims appear verified.
+## Core Rules
+
+- Target the smallest workflow or utility folder that owns the changed runtime
+  behavior.
+- Write or update `OVERVIEW.md` in that same folder only.
+- Use code and artefacts as the primary source of truth.
+- Use tests only to confirm behavior, not define it.
+- Use an existing `OVERVIEW.md` only as a secondary reference.
+- Ignore generated noise such as `__pycache__/`, `.polyapi-python`, and other
+  compiled or generated artefacts.
+- Expand client logic instead of leaving client calls as black boxes.
+- Expand utility or global logic when it changes behavior through validation,
+  branching, retries, caching, state access, or external I/O.
+- All file references inside `OVERVIEW.md` must be clickable relative Markdown
+  links that resolve from the overview location.
+- State assumptions explicitly instead of stopping unless something is genuinely
+  unclear.
+
+## Folder Types
+
+The analysed folder will usually be one of:
+
+- `src/<workflow_name>`
+- `src/utilities/<utility_name>`
+- `src/scripts/<script_name>`
+
+## Flow Discovery
+
+Verify these common filename patterns against the repo's discovery rules and
+function metadata; include supported entrypoints with other filenames.
+
+- Treat files under `server/` matching `*_sfx.py` or `*SFX.ts` as server entry
+  points.
+- Treat files under `client/` matching `*_cfx.py` or `*CFX.ts` as client
+  functions.
+- If server entry points exist, each one defines a primary flow.
+- If no server entry points exist, treat callable client functions as candidate
+  entry points and use an inferred caller trigger when needed.
+
+## Artefacts and Dependencies
+
+Inspect the analysed folder for:
+
+- `artefacts/jobs/**`
+- `artefacts/webhooks/**`
+- `artefacts/canopy/**`
+- `artefacts/vari/**`
+- `artefacts/tabi/**`
+- `artefacts/types/**`
+- `artefacts/specs/**`
+- `deployment/**`
+
+Use these to determine triggers, contracts, Vari or TABI usage, and deployment
+assumptions.
+
+## Output
+
+- Create exactly one same-folder `OVERVIEW.md` for the analysed path.
+- Include one `# Flow: <Flow Name>` section per primary flow.
+- Include a Mermaid flowchart and step details for each flow.
+- Include triggers or inferred callers, end states, assumptions, and all
+  business-relevant dependencies.
+
+## Reference
+
+See `./references/REFERENCE.md` for the exact output structure, Mermaid rules,
+step-detail fields, and final validation checklist.

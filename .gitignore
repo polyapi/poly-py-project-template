@@ -19,5 +19,7 @@ build/
 *.crt
 .poly_deploy.state.json
 .flow_resume.json
+.flow_resume.*.tmp
 local/
 .DS_Store
+.vscode

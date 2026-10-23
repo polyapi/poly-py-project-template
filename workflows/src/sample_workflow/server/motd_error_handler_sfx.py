@@ -1,8 +1,9 @@
 import re
 import sys
-from typing import Any
+from typing import Any, Dict
 
 from polyapi.typedefs import PolyServerFunction
+from typing_extensions import TypedDict
 
 polyConfig: PolyServerFunction = {
     "name": "motd_error_handler",
@@ -13,7 +14,11 @@ polyConfig: PolyServerFunction = {
 }
 
 
-def motd_error_handler(error: dict[str, Any]) -> dict[str, str]:
+class ErrorResponse(TypedDict):
+    message: str
+
+
+def motd_error_handler(error: Dict[str, Any]) -> ErrorResponse:
     source = error.get("functionName", "unknown function")
     if not isinstance(source, str) or not re.fullmatch(
         r"[A-Za-z0-9_. -]{1,80}", source

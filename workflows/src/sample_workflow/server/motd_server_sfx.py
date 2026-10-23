@@ -1,5 +1,5 @@
 import re
-from typing import Any
+from typing import Any, Dict
 
 from polyapi import poly, polyCustom
 from polyapi.typedefs import PolyServerFunction
@@ -20,7 +20,7 @@ class MotdResponse(TypedDict):
 
 
 async def motd_server(
-    event: dict[str, Any], headers: dict[str, str], params: dict[str, str]
+    event: Dict[str, Any], headers: Dict[str, str], params: Dict[str, str]
 ) -> MotdResponse:
     """Webhook and job entrypoint. Clients are invoked through the generated SDK."""
     name = event.get("name") if isinstance(event, dict) else None

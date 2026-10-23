@@ -172,8 +172,60 @@ async def test_global_handler_redacts_and_alerts_independently_of_log_level(
     }
     sdk.alert.assert_awaited_once()
     assert json.loads(sdk.alert.await_args.args[0]["message"]) == {
-        "message": "useful detail",
-        "password": "[REDACTED]",
+        "message": "PolyAPI function execution failed",
     }
     sdk.log.assert_not_called()
     assert "synthetic-secret" not in capsys.readouterr().out
+
+
+async def test_global_error_text_never_reaches_platform_alert(sdk):
+    sdk.alert.side_effect = load_source("client/send_alert_cfx.py").send_alert
+    marker = "SYNTHETIC_SECRET_MARKER"
+    error = {
+        "message": f"Authorization: Bearer {marker}",
+        "stack": f"request failed with password={marker}",
+        "url": f"https://unit.invalid/?api_key={marker}",
+        "details": {"response": marker},
+        "functionName": "motd_server",
+        "functionContext": "example.sample_workflow",
+        "statusCode": 502,
+    }
+    result = await load_source("server/error_alerts_sfx.py").error_alerts(error)
+    assert result == {"notified": True}
+    delivered = sdk.send.await_args.args[0]
+    assert marker not in json.dumps(delivered)
+    assert json.loads(delivered["message"]) == {
+        "message": "PolyAPI function execution failed",
+        "functionName": "motd_server",
+        "functionContext": "example.sample_workflow",
+        "statusCode": 502,
+    }
+
+
+@pytest.mark.parametrize(
+    "invalid", ["Bearer synthetic-token", "https://unit.invalid", "x" * 161, {}, None]
+)
+async def test_global_error_rejects_unbounded_diagnostic_fields(sdk, invalid):
+    await load_source("server/error_alerts_sfx.py").error_alerts(
+        {
+            "functionName": invalid,
+            "functionContext": invalid,
+            "statusCode": True,
+        }
+    )
+    assert json.loads(sdk.alert.await_args.args[0]["message"]) == {
+        "message": "PolyAPI function execution failed",
+    }
+
+
+async def test_utility_boolean_results_and_read_only_default_context(sdk, capsys):
+    module = load_source("client/log_cfx.py")
+    assert await module.log("debug", "function", "filtered") is False
+    assert await module.log("info", "function", "logged") is True
+    assert await module.log("info", "function", "with_context", {"count": 1}) is True
+    assert await module.log("info", "function", "default_again") is True
+    assert module.log.__defaults__ == ({},)
+    assert (
+        await load_source("client/send_alert_cfx.py").send_alert({"message": "safe"})
+        is True
+    )

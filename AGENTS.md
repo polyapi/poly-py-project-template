@@ -26,7 +26,7 @@ artefacts; keep operator scripts outside `workflows/src/`.
 
 ## Implementation
 
-- Use Python 3.12, uv, Black, Flake8, and pytest.
+- Use Python 3.12.12, uv, Black, Flake8, and pytest.
 - Keep function code, `polyConfig`, JSON artefacts, and tests aligned.
 - Use the native `polyapi-python` SDK and generated calls for deployed dependencies.
   Verify signatures in the selected environment's generated SDK; do not invent
@@ -41,9 +41,9 @@ artefacts; keep operator scripts outside `workflows/src/`.
 
 ## Validate and finish
 
-Run commands from the repository root:
+Use Bash for documented shell commands. Run commands from the repository root:
 
-```fish
+```bash
 uv sync --locked
 uv run --locked pytest cli/tests/test_preflight.py
 uv run --locked pytest workflows/src/sample_workflow/tests/test_motd.py
@@ -85,9 +85,15 @@ to the task; they provide guidance, not authorization to deploy or publish.
 | --- | --- |
 | Python functions, SDK contracts, and secret injection | [polyapi-sdk](.agents/skills/polyapi-sdk/SKILL.md) |
 | Workflow resources, references, and ownership | [artefacts-usage](.agents/skills/artefacts-usage/SKILL.md) |
-| Names, contexts, and resource renames | [naming-conventions](.agents/skills/naming-conventions/SKILL.md) |
+| Names, contexts, and resource renames | [coding-conventions](.agents/skills/coding-conventions/SKILL.md) |
 | Error handling, logging, and redaction | [coding-standards](.agents/skills/coding-standards/SKILL.md) |
 | Workflow documentation after behavior changes | [generate-overview](.agents/skills/generate-overview/SKILL.md) |
 
-Keep skills aligned with this template's code and SDK version. Additional
-PolyAPI skills are available at <https://github.com/polyapi/poly-skills>.
+These are complete copies of the four [Python skills](https://github.com/polyapi/poly-skills/tree/main/polyapi-python/skills)
+and the common [generate-overview skill](https://github.com/polyapi/poly-skills/tree/main/polyapi-common/skills/generate-overview)
+maintained in `poly-skills`. Keep those package names and copy their supporting
+references when refreshing reviewed updates.
+
+Keep this template's paths, SDK pin, commands, and deployment safeguards in this
+file and [CONVENTIONS.md](CONVENTIONS.md). Check shared guidance against the
+current implementation before applying an update.

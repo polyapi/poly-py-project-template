@@ -29,11 +29,11 @@ the initial API function names.
 From the repository root, after configuring the target as described in the
 root README:
 
-```fish
-env ENVPATH=workflows/dev.env uv run --locked python -m cli.operations train-openapi workflows/src/sample_workflow/artefacts/specs --context example.sample_workflow --dry-run
-env ENVPATH=workflows/dev.env uv run --locked python -m cli.operations train-openapi workflows/src/sample_workflow/artefacts/specs --context example.sample_workflow
-env ENVPATH=workflows/dev.env uv run --locked python cli/flow.py push --paths sample_workflow --dry-run
-env ENVPATH=workflows/dev.env uv run --locked python cli/flow.py push --paths sample_workflow
+```bash
+ENVPATH=workflows/dev.env uv run --locked python -m cli.operations train-openapi workflows/src/sample_workflow/artefacts/specs --context example.sample_workflow --dry-run
+ENVPATH=workflows/dev.env uv run --locked python -m cli.operations train-openapi workflows/src/sample_workflow/artefacts/specs --context example.sample_workflow
+ENVPATH=workflows/dev.env uv run --locked python cli/flow.py push --paths sample_workflow --dry-run
+ENVPATH=workflows/dev.env uv run --locked python cli/flow.py push --paths sample_workflow
 ```
 
 Training translates the specs with `hostUrlAsArgument=hostUrl`, enriches their
@@ -59,6 +59,11 @@ No account or API key is needed for these two upstream public APIs.
 
 ## Runtime contract
 
+Deployed object arguments use SDK-supported `Dict` annotations, and response
+objects use local `TypedDict` definitions. Mood is a string in the generated
+contract; both the webhook validator and client enforce `funny` or `wise` at
+runtime. Native SDK payload tests verify these argument and return schemas.
+
 Send `{"name":"Reader","mood":"wise"}` to the deployed
 `/apis/example-motd/motd` webhook with the target's PolyAPI authorization.
 Success returns HTTP 200 and `{"statusCode":200,"message":"Hi Reader! <advice>"}`.
@@ -75,9 +80,9 @@ Success returns HTTP 200 and `{"statusCode":200,"message":"Hi Reader! <advice>"}
 
 ## Verification
 
-```fish
+```bash
 uv run --locked pytest workflows/src/sample_workflow/tests/test_motd.py
-env RUN_POLY_INTEGRATION=true uv run --locked --env-file workflows/dev.env pytest workflows/src/sample_workflow/tests/test_motd_integration.py
+RUN_POLY_INTEGRATION=true uv run --locked --env-file workflows/dev.env pytest workflows/src/sample_workflow/tests/test_motd_integration.py
 ```
 
 The live tests require `POLY_TEST_WEBHOOK_URL`, a configured secret, and deployed

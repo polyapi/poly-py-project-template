@@ -34,3 +34,11 @@ logs:
 
 build-schema:
 	uv run --locked python -m cli.schema_refresh $(ARGS)
+
+.PHONY: push-dynamic dry-run-dynamic
+
+push-dynamic:
+	uv run --locked python cli/flow.py push-dynamic $(ARGS)
+
+dry-run-dynamic:
+	uv run --locked python cli/flow.py push-dynamic --dry-run $(ARGS)

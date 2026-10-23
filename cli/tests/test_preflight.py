@@ -255,3 +255,48 @@ def test_helpers_without_deployable_metadata_remain_ignored(tmp_path, source):
     path = tmp_path / "helper.py"
     path.write_text(source)
     assert flow.load_function_specs_from_python(path) == []
+
+
+def test_maintained_functions_emit_native_sdk_boundary_contracts(monkeypatch):
+    monkeypatch.setenv("POLYAPI_NAMESPACE", "example")
+    monkeypatch.delenv("POLYAPI_NAMESPACES", raising=False)
+    monkeypatch.setattr(flow, "get_execution_api_key", lambda: None)
+    args = flow.parse_args(["push", "--types", "functions", "--dry-run"])
+    config = flow.build_config(Path(__file__).resolve().parents[2], args)
+    specs = flow.load_function_specs(config, args, flow.Logger(False))
+    contexts = flow.build_local_func_context(specs)
+    expected = {
+        "motd_client": (["string"], "string", None),
+        "motd_server": (
+            ["object", "object", "object"],
+            None,
+            {"statusCode": "integer", "message": "string"},
+        ),
+        "motd_error_handler": (["object"], None, {"message": "string"}),
+        "validate_motd_payload": (["object", "object", "object"], "boolean", None),
+        "log": (["string", "string", "string", "object"], "boolean", None),
+        "send_alert": (None, "boolean", None),
+        "error_alerts": (["object"], None, {"notified": "boolean"}),
+    }
+    assert {spec.name for spec in specs} == set(expected)
+    for spec in specs:
+        payload = flow.build_function_payload(spec, contexts)
+        argument_types, return_type, fields = expected[spec.name]
+        assert payload["returnType"] != "any", spec.name
+        assert all(arg["type"] != "any" for arg in payload["arguments"]), spec.name
+        if argument_types:
+            assert [
+                arg["type"] for arg in payload["arguments"]
+            ] == argument_types, spec.name
+        if return_type:
+            assert payload["returnType"] == return_type, spec.name
+        if fields:
+            schema = payload["returnTypeSchema"]
+            assert {
+                key: value["type"] for key, value in schema["properties"].items()
+            } == fields
+            assert set(schema["required"]) == set(fields)
+        if spec.name == "send_alert":
+            schema = json.loads(payload["arguments"][0]["typeSchema"])
+            assert schema["properties"]["message"]["type"] == "string"
+            assert schema["required"] == ["message"]

@@ -343,7 +343,7 @@ def deletion_plan(
                 )
             if owned:
                 selected.append((f"{ENDPOINTS[kind]}/{flow.resource_id(item)}", item))
-    # Remove dependants before their functions or schemas.
+    # Remove dependents before their functions or schemas.
     selected.sort(
         key=lambda entry: (
             not entry[0].startswith(("/triggers/", "/jobs/", "/subscriptions/")),
@@ -628,6 +628,7 @@ def main(argv: list[str] | None = None) -> int:
             renames=args.rename,
         )
     elif args.command == "train-model":
+        assert model is not None
         train_model(client, model, dry_run=False)
     elif args.command == "delete-content":
         delete_content(

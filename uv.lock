@@ -1,6 +1,6 @@
 version = 1
-revision = 3
-requires-python = "==3.12.*"
+revision = 5
+requires-python = "==3.12.12"
 
 [[package]]
 name = "aiohappyeyeballs"
@@ -436,7 +436,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "jsonschema", specifier = "==4.26.0" },
-    { name = "polyapi-python", specifier = "==0.3.20.dev4" },
+    { name = "polyapi-python", specifier = "==0.3.20" },
     { name = "python-dotenv", specifier = "==1.2.1" },
     { name = "pyyaml", specifier = "==6.0.3" },
     { name = "requests", specifier = "==2.32.3" },
@@ -453,7 +453,7 @@ dev = [
 
 [[package]]
 name = "polyapi-python"
-version = "0.3.20.dev4"
+version = "0.3.20"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "colorama" },
@@ -466,9 +466,9 @@ dependencies = [
     { name = "truststore" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/8d/91/f5f7443997f3400c1c26b50f9d46019e1c512513002eae261ec32008635c/polyapi_python-0.3.20.dev4.tar.gz", hash = "sha256:314bbc6a6021543daa20cfcdce7aa89e510293403e8858f6c8d504c6be39af76", size = 94708, upload-time = "2026-09-14T17:10:46.134Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/37/f1/20c3cda5bcb87e28e87d40fab0dfbc306d5c5aa802526a30d5dcd012373a/polyapi_python-0.3.20.tar.gz", hash = "sha256:372f37bbbf7676a31d369d69e80e1b84bc7dc06ad04d64e10700d8b66d70f9d3", size = 94694, upload-time = "2026-09-21T19:11:36.445Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b7/24/cdbd8a5f593ff935f78be5c9698b4a4b63906a6cd2d14ef3f36b7edf1a26/polyapi_python-0.3.20.dev4-py3-none-any.whl", hash = "sha256:aac41a961d6520a3bf48280f3b3ee6f0f161c9778fdc496d769fd3d5c1bb0fe5", size = 69215, upload-time = "2026-09-14T17:10:44.648Z" },
+    { url = "https://files.pythonhosted.org/packages/01/0c/43f4f5a5d63d80dcbc82fe2952a12503884cf0280d0904927beea58ae1cb/polyapi_python-0.3.20-py3-none-any.whl", hash = "sha256:e13ec17ced5af3e207e76246dbd57357418a07fe968432782acc6a704b723fe7", size = 69156, upload-time = "2026-09-21T19:11:34.789Z" },
 ]
 
 [[package]]

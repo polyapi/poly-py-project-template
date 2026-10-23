@@ -1,9 +1,10 @@
 # Common utilities
 
-`example.utilities.log(level, function_name, message, context=None)` filters by
+`example.utilities.log(level, function_name, message, context={})` filters by
 `example.configurations.logging.log_level` and formats structured context. The
 NONE log-level value is cached for 60 seconds; invalid values retain the current
-level, and failed refreshes fall back to `debug`.
+level, and failed refreshes fall back to `debug`. The function returns `True`
+after logging or `False` when filtered. Its default context is read-only.
 
 Context is recursively redacted for API keys, authorization, app keys, client
 secrets, execution IDs, passwords, secrets, tokens, and correlation headers.
@@ -14,19 +15,23 @@ does not remove credentials embedded in arbitrary text.
 `example.utilities.slack.send_alert({"message": "..."})`. This utility reads the
 exact channel Vari, logs start/success with a shared correlation ID, and awaits
 `OOB.polyapi.internal.alerting.sendAlertToPoly_async`. It does not log message
-previews. An unavailable channel or delivery failure propagates to its caller.
+previews and returns `True` after delivery. An unavailable channel or delivery
+failure propagates to its caller.
 
-`example.diagnostics.services.error_alerts` redacts structured error context and
-calls `send_alert` directly, even when logging is set to `silent`. The global
-error trigger starts enabled. The handler catches notification failures to avoid
+`example.diagnostics.services.error_alerts` sends a fixed failure message plus
+validated, bounded function names/contexts and an integer HTTP status when present.
+It never forwards arbitrary messages, stacks, URLs, headers, bodies, or nested
+error data. It calls `send_alert` directly, even when logging is `silent`.
+The global error trigger starts enabled. The handler returns `{"notified": true}`
+on delivery and catches notification failures with `{"notified": false}` to avoid
 an error-handler loop.
 
 Set `LOG_LEVEL` and `SLACK_CHANNEL_ID` in the selected local environment before
 pushing the utilities. They populate the two NONE Vari artefacts. The target
 also needs the generated internal alert function.
 
-```fish
-env ENVPATH=workflows/dev.env uv run --locked python cli/flow.py push --paths utilities/common --dry-run
+```bash
+ENVPATH=workflows/dev.env uv run --locked python cli/flow.py push --paths utilities/common --dry-run
 ```
 
 ## Project utility commands

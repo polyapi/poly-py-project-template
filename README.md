@@ -1,11 +1,13 @@
 # PolyAPI Python Project Template
 
-A Python 3.12 starter project for building, testing, and deploying PolyAPI
+A Python 3.12.12 starter project for building, testing, and deploying PolyAPI
 workflows with the native Python SDK. It includes example integrations,
 shared utilities, local tests, and Flow tooling for managing platform resources.
 
 Flow synchronizes Python functions, Vari, Tabi, schemas, webhooks, triggers,
-jobs, AI functions, Canopy applications, and GraphQL subscriptions.
+jobs, AI functions, Canopy applications, and GraphQL subscriptions. Its
+`push-dynamic` command rebuilds consuming server functions when a shared client
+changes, including dependencies through other client functions.
 
 ## Structure
 
@@ -30,27 +32,36 @@ See [CONVENTIONS.md](CONVENTIONS.md) for layout and generated SDK rules, and
 Coding agents should start with [AGENTS.md](AGENTS.md). It maps common tasks to
 the relevant workflow context, explains Python SDK and deployment boundaries,
 and provides validation commands. Workflow overviews describe their contracts
-and setup. Five local skills cover SDK usage, artefacts, naming, coding
-standards, and overview maintenance; see the [skill index](AGENTS.md#agent-skills).
+and setup. Five bundled skills from [poly-skills](https://github.com/polyapi/poly-skills)
+cover SDK usage, artefacts, coding conventions, coding standards, and overview
+maintenance; see the [skill index](AGENTS.md#agent-skills). Keep complete skill
+folders, including their references, when refreshing reviewed shared updates.
 They are Markdown guidance and need no AI provider credentials or extra runtime
 dependencies.
 
+The optional VS Code Code Spell Checker extension uses [cspell.json](cspell.json)
+for shared Python and PolyAPI vocabulary. Personal editor settings stay local.
+
 ## Local setup
 
-Install Python 3.12 and [uv](https://docs.astral.sh/uv/), then run:
+Install [uv](https://docs.astral.sh/uv/), then run these Bash commands:
 
-```fish
+```bash
+uv python install 3.12.12
 uv sync --locked
 make check
 uv run --locked python cli/flow.py push --help
 ```
 
+Python is pinned to 3.12.12 in `.python-version`, `pyproject.toml`, and CI to
+match the verified SDK 0.3.20 server base image.
+
 Local checks need no API key and do not deploy anything. The SDK is pinned to
-`polyapi-python==0.3.20.dev4`. Review SDK upgrades and regenerate `uv.lock`
+`polyapi-python==0.3.20`. Review SDK upgrades and regenerate `uv.lock`
 together.
 
 Workflows and Flow tooling run in Python.
-After configuring a target, use `env ENVPATH=workflows/dev.env make build-schema`
+After configuring a target, use `ENVPATH=workflows/dev.env make build-schema`
 to refresh platform JSON validators from that instance, or add `--build-schema`
 to a Flow push. See the [CLI guide](cli/README.md#schema-refresh) for schema-source
 overrides, AI enrichment, and validation flags.
@@ -59,7 +70,7 @@ overrides, AI enrichment, and validation flags.
 
 Run this once from the repository root in each clone:
 
-```fish
+```bash
 git config --local core.hooksPath .githooks
 ```
 
@@ -70,7 +81,7 @@ PATH used by your terminal or Git client.
 
 To run the hook without creating a commit:
 
-```fish
+```bash
 git hook run pre-commit
 ```
 
@@ -79,7 +90,7 @@ git hook run pre-commit
 Create a Git repository from the template with an initial commit on `main`.
 Flow uses Git branch history to select production safeguards.
 
-```fish
+```bash
 cp workflows/dev.env.example workflows/dev.env
 ```
 
@@ -113,7 +124,7 @@ For multiple owned roots, `POLYAPI_NAMESPACES=example,second` takes precedence.
 Replace `example` consistently in local contexts, generated SDK calls,
 portable references, job/trigger names, webhook slugs, and Canopy subpaths:
 
-```fish
+```bash
 rg -n '\bexample\b' workflows/src designs/examples
 ```
 
@@ -134,19 +145,21 @@ Use a development environment and a branch based on `develop`. The example
 configuration binds `develop` to `workflows/dev.env`; branches based directly
 on `main` use production safeguards.
 
-```fish
+```bash
 git switch -c develop
-git switch -c EN/my-workflow
-env ENVPATH=workflows/dev.env uv run --locked python cli/flow.py push --paths sample_workflow --dry-run
-env ENVPATH=workflows/dev.env uv run --locked python cli/flow.py push --paths sample_workflow
+git switch -c feature/my-workflow
+ENVPATH=workflows/dev.env uv run --locked python cli/flow.py push-dynamic --paths sample_workflow --dry-run
+ENVPATH=workflows/dev.env uv run --locked python cli/flow.py push-dynamic --paths sample_workflow
 ```
 
-Review the dry-run target and plan before running the push without `--dry-run`.
+Review the dry-run target and expanded dependency plan before running without
+`--dry-run`. See [dependency-aware deployments](cli/README.md#dependency-aware-deployments)
+for named functions, nested consumers, exclusions, and interrupted-run recovery.
 Flow verifies the authenticated environment before resource requests and, by
 default, generates the SDK after pushes that include Python or AI functions.
 To generate the SDK separately using the same target:
 
-```fish
+```bash
 uv run --locked --env-file workflows/dev.env python -m polyapi generate
 ```
 
@@ -160,11 +173,11 @@ you configure it and move it into a workflow's `artefacts/` directory.
 ## Verification
 
 [CI](.github/workflows/ci.yml) runs on pushes, pull requests, and manual dispatch.
-It installs Python 3.12 and locked dependencies, then runs `make check` for
+It installs Python 3.12.12 and locked dependencies, then runs `make check` for
 formatting, lint, and local tests. Live integration tests are explicitly disabled;
 CI needs no PolyAPI credentials and performs no deployments.
 
-```fish
+```bash
 make check
 make format
 uv run --locked pytest cli/tests
@@ -174,8 +187,8 @@ uv run --locked pytest workflows/src/sample_workflow/tests/test_motd.py
 After deploying the sample, set `POLY_TEST_WEBHOOK_URL` in the selected env
 file to the exact deployed webhook URL, then explicitly opt into runtime tests:
 
-```fish
-env RUN_POLY_INTEGRATION=true uv run --locked --env-file workflows/dev.env pytest -m integration
+```bash
+RUN_POLY_INTEGRATION=true uv run --locked --env-file workflows/dev.env pytest -m integration
 ```
 
 The webhook tests make two authenticated calls with synthetic input. The weather
@@ -189,7 +202,7 @@ jobs, trains APIs, deploys resources, sends alerts, or recreates live streams.
 | Message-of-the-day workflow | Calls external joke/advice APIs using Vari configuration and secret injection; includes a security function, webhook, trigger, and scheduled job |
 | Weather AI | Uses two AccuWeather tools, secret bindings, and structured output |
 | Shared utilities | Provides log filtering, recursive redaction, Slack alerts, and a global error handler |
-| Flow | Validates, previews, and synchronizes functions and platform resources from local code and JSON artefacts |
+| Flow | Validates and synchronizes functions and platform resources; rebuilds nested client consumers and provides offline graph reports |
 | Canopy | Creates applications and synchronizes their configuration and descriptions |
 | GraphQL subscriptions | Configures event streams that invoke server functions |
 | API tooling | Translates OpenAPI specifications, enriches models with AI, and trains API functions |

@@ -1,7 +1,7 @@
 import json
 import sys
 import time
-from typing import Any, Literal
+from typing import Any, Dict
 
 from polyapi import poly, vari
 from polyapi.typedefs import PolyClientFunction
@@ -57,11 +57,12 @@ def sanitize(value: Any, ancestors: frozenset[int] = frozenset()) -> Any:
 
 
 async def log(
-    level: Literal["debug", "info", "warn", "error", "fatal"],
+    level: str,
     function_name: str,
     message: str,
-    context: dict[str, Any] | None = None,
-) -> None:
+    context: Dict[str, Any] = {},
+) -> bool:
+    # The SDK supports Dict, not Optional/union boundaries. Never mutate this default.
     global _log_level, _refreshed_at
     if level not in LEVELS or level == "silent":
         raise ValueError("Unsupported log level")
@@ -76,7 +77,7 @@ async def log(
         except Exception:
             _log_level = "debug"
     if LEVELS[level] < LEVELS[_log_level]:
-        return
+        return False
     safe_context = sanitize(context) if context is not None else None
     prefix = f"[{level}][{function_name}] {message}"
     suffix = f" | context={json.dumps(safe_context)}" if context is not None else ""
@@ -97,3 +98,4 @@ async def log(
                 )
             }
         )
+    return True

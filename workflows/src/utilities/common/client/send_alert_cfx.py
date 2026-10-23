@@ -17,7 +17,7 @@ class AlertArgs(TypedDict):
     message: str
 
 
-async def send_alert(args: AlertArgs) -> None:
+async def send_alert(args: AlertArgs) -> bool:
     start = time.monotonic()
     correlation_id = f"slack_{uuid.uuid4().hex}"
     channel_id = await vari.example.configurations.slack.channel_id.get_async()
@@ -54,3 +54,4 @@ async def send_alert(args: AlertArgs) -> None:
             "durationMs": (time.monotonic() - start) * 1000,
         },
     )
+    return True

@@ -4,14 +4,14 @@ Python Flow validates and synchronizes PolyAPI resources from local Python
 functions and JSON artefacts. It also provides OpenAPI training with AI metadata
 enrichment, scoped resource cleanup, function logs, and schema refresh.
 
-See the [project README](../README.md) for Python 3.12 setup, dependencies,
+See the [project README](../README.md) for Python 3.12.12 setup, dependencies,
 environment configuration, and the sample workflow.
 
 Run from the repository root:
 
-```fish
-env ENVPATH=workflows/dev.env uv run --locked python cli/flow.py push --dry-run
-env ENVPATH=workflows/dev.env uv run --locked python cli/flow.py push --paths sample_workflow --types functions,variables,webhooks,triggers,jobs
+```bash
+ENVPATH=workflows/dev.env uv run --locked python cli/flow.py push --dry-run
+ENVPATH=workflows/dev.env uv run --locked python cli/flow.py push --paths sample_workflow --types functions,variables,webhooks,triggers,jobs
 ```
 
 Run utility commands with `uv run --locked python -m cli.operations --help`.
@@ -36,11 +36,211 @@ Run utility commands with `uv run --locked python -m cli.operations --help`.
 Both `artefacts/` and legacy `artifacts/` spellings are discovered.
 
 The push order is Vari → Canopy → Tabi → schemas → Python functions →
-AI functions → webhooks → triggers → jobs → subscriptions. Client functions
-are synchronized before server functions. Pushes selecting Python or AI functions
+AI functions → webhooks → triggers → jobs → subscriptions. Regular `push`
+synchronizes client functions before server functions; `push-dynamic` uses
+the dependency graph to order its planned functions. Pushes selecting Python or AI functions
 regenerate the SDK even when remote functions are unchanged, unless `--skip-generate`
 is supplied or generation is disabled in configuration. Dry runs do not generate.
 A failed generation is retried by the next push, including `--resume`.
+
+## Dependency-aware deployments
+
+Use `push-dynamic` when updating shared client functions. It uses Python's AST
+to find generated SDK references, then deploys changed functions, intermediate
+client functions, and their consuming server functions in dependency order.
+A client function is embedded in its consumers' generated SDK; an unchanged
+server source therefore still needs rebuilding after its client code changes.
+Traversal stops at server functions because subsequent server calls run over HTTP.
+
+```bash
+# Compare selected local functions with the selected instance and preview consumers.
+ENVPATH=workflows/dev.env uv run --locked python cli/flow.py push-dynamic --dry-run
+ENVPATH=workflows/dev.env uv run --locked python cli/flow.py push-dynamic --paths sample_workflow --dry-run
+
+# Force one named function and its consumers, including unchanged functions.
+ENVPATH=workflows/dev.env uv run --locked python cli/flow.py push-dynamic example.utilities.log --dry-run
+ENVPATH=workflows/dev.env uv run --locked python cli/flow.py push-dynamic example.utilities.log
+
+# Resume an interrupted dependency deployment against the same target.
+ENVPATH=workflows/dev.env uv run --locked python cli/flow.py push-dynamic --resume
+```
+
+- `--paths` and `--types client-functions` / `server-functions` select where
+  changes are detected. Consumers can be outside that selection; the plan lists
+  those additional functions before any resource writes.
+- Positional seeds and comma-separated `--seeds` accept exact `context.name`,
+  source files, or directories. Named seeds default to functions only when
+  comparison is omitted or `--seed-from none` is selected. Explicit `remote` or
+  `specs` comparison retains the configured resource set in live runs. Use
+  `--types` to choose resources and `--paths` to scope detection and resource
+  synchronization. Interactive runs selecting other resources offer the normal
+  scope prompt. The effective resource selection, including
+  `POLY_DEPLOY_ENABLED_TYPES`, must include functions; an invalid selection stops
+  before resource writes or resume-state changes. Offline reports remain
+  functions-only. Named or scoped runs do not inspect or delete orphans.
+- By default, changes are compared using native Python SDK payloads, including
+  source, metadata, requirements, and generated contexts. A changed intermediate
+  client becomes a seed so its other consumers are included too.
+- Server payloads include contexts and third-party package requirements from
+  reachable Python client functions, including nested clients and accessible
+  tenant/public clients. Live discovery reads the selected target's `/specs`
+  catalog using its SDK visibility, namespace, language, and precedence rules,
+  including generated `_async` wrappers for server, API, AI, and auth functions
+  (`introspectToken`, `refreshToken`, and `revokeToken`; `getToken` has no alias);
+  the key needs library-generation access. Local source takes precedence for
+  the same declared function. A live plan rejects local declarations whose SDK
+  names, including server `_async` aliases, are exported by a different function;
+  rename the conflicting function before deploying. Shared clients supply
+  dependencies only and are never deployed or added to orphan ownership. Missing
+  source for a referenced Python client stops the plan. Offline reports cannot
+  inspect these shared clients.
+  Transitive client requirements are collected from import statements, including
+  function-local imports, without executing client source or importing its
+  modules. Resolution uses the pinned Python SDK's package-name mapping and
+  base-image exclusions; requirements are deduplicated. Required packages must
+  have installed distribution metadata in the local environment. Traversal stops
+  at HTTP wrappers, auth helpers, and webhook listeners. Local deployable schema
+  extraction still uses the SDK's full parser, which executes local module-level code.
+  Referenced root-level functions such as `poly.helper()`, Vari such as
+  `vari.root_setting.get_async()`, and Tabi such as
+  `tabi.root_table.select_many({})` require unfiltered SDK
+  generation because the platform's context filter cannot select an empty root
+  context. Flow clears the server's generation filter and retains transitive
+  client package requirements. Root Vari references are retained from both server
+  source and nested local or shared clients, including reads, updates, injection,
+  and `onUpdate` listeners. Vari and Tabi aliases respect Python lexical scopes,
+  fixed tuple positions, and resource values passed to same-file helpers, so
+  separate helpers can reuse a local name without losing dependencies.
+  Flow also matches returned resource values against the live SDK catalog and
+  table query/row types against native SDK exports, without executing those definitions.
+  Direct scoped resource values retain their owning contexts before newly
+  synchronized resources appear in that catalog.
+  Table-rendering failures are checked against each server's effective generation
+  scope and referenced exports. Unsupported tables outside that scope do not block
+  deployment; required tables and tables included by unfiltered generation still do.
+  When Tabi is synchronized in the same run, Flow rechecks the updated catalog
+  against the prepared server scopes before writing any functions.
+  Catalog-backed module imports and aliases narrow to their referenced children;
+  excluded sibling resources do not become dependencies just because they share a
+  parent module. A visible root Tabi or Vari with the same name as that module does not
+  override a narrowed child reference. An explicit child generation scope can
+  also satisfy an unused module import or alias when it survives context exclusions.
+  Actual root-resource values, methods, and table types still require unfiltered generation
+  and retain its scope guards.
+  Actual table/type values and namespaces passed to unknown code remain dependencies.
+  Scoped table exports keep their owning contexts. Root HTTP wrappers and webhook listeners retain
+  the same generation requirement without loading their implementation. Webhook
+  listeners use their declared name, such as `poly.events(callback)`, with no
+  `_async` alias. Explicit `generate_contexts` or context exclusions make this
+  combination invalid; Flow stops before
+  deploying the affected server.
+- Every planned function must pass SDK parsing, payload validation, namespace
+  ownership, and exclusion checks. An excluded consumer blocks the plan rather
+  than leaving it stale. `--skip-invalid` is unsupported for dependency plans.
+- Identical intermediate clients are redeployed by default.
+  `--skip-unchanged-cfx` skips those clients after comparison; affected servers
+  are still rebuilt. Offline `--seed-from none` cannot compare clients, so it
+  retains intermediates and prints a warning even with `--skip-unchanged-cfx`.
+  `--force` also bypasses the existing timestamp guard;
+  an unchanged consumer rebuild does not require bypassing that guard.
+- Live runs ask for confirmation after printing the plan. Above `--max-leaves`
+  (default 10), also type the server count. `--yes` (or `-y`) accepts this plan prompt
+  non-interactively; production, execution-key, environment, and OTP checks
+  still apply. The existing `--skip-validation` acknowledgement also covers
+  this confirmation prompt.
+- Failed or blocked prerequisite resource sync prevents function deployment.
+  A failed function deployment stops the remaining pipeline. Pending function identities
+  stay in target-bound resume state, so `--resume` rebuilds unfinished consumers
+  even if their source and the already-deployed clients now match the platform.
+  A subsequent run cannot silently discard an unfinished tree. Dry runs do not
+  write or clear that state. Deployments are sequential, not atomic.
+
+Python import aliases, chained aliases, `global`/`nonlocal` bindings, tuple
+assignment (including starred unpacking), `typing.cast`, function references,
+and namespace arguments forwarded to same-file helpers are recognized. Unpacking
+resolves fixed positions; starred captures and uncertain expanded values retain
+conservative SDK references. Helper calls track fixed positional arguments before
+the first `*args` expansion and named keyword arguments; positional arguments
+after an expansion retain conservative references. Function, Tabi, and Vari
+arguments and defaults remain SDK dependencies even when the helper ignores them.
+Unused function imports and aliases also retain the exports Python evaluates.
+Namespaces still narrow to the referenced children, without including siblings.
+Server SDK `_async` wrappers resolve to their server identity; client functions
+retain their declared names, including a literal
+`_async` suffix, when resolving dependencies and transitive SDK generation contexts.
+Callable attributes such as `poly.example.helper.__call__()` resolve to the longest
+known function prefix, so their consumers rebuild and inherit client requirements.
+Exact identities take precedence; matching remains case-sensitive.
+Shared consumers are deployed once. Cycles have a stable internal order, followed
+by their downstream consumers. Namespace values or dynamic `getattr` access
+include all matching local functions conservatively and appear as a warning.
+Class-held SDK namespaces and namespace arguments captured by `**kwargs` receive
+the same conservative treatment because instance attributes and keyword mappings
+can escape lexical alias tracking.
+
+The graph covers local deployable functions. It cannot discover consumers in
+other repositories or references constructed entirely at runtime with `eval`,
+`exec`, or dynamic module imports. Wildcard SDK imports are rejected. Use explicit
+generated SDK calls for dependency tracking. Live payload comparison is the
+default; cached-code comparison is an explicit option described below.
+
+### Comparison and graph reports
+
+| Option | Behavior |
+| --- | --- |
+| `--seed-from remote` | Detect changes using live native SDK payload comparison, including metadata. Default when no named seeds are supplied, or when `--paths` is supplied. |
+| `--seed-from specs` | Detect code changes using the native Python SDK's `polyapi/poly/specs.json` cache, applying its client-language filter and callable-export precedence, including root entries and generated `_async` wrappers. Wrappers are not separate function identities. Explicit seeds are still included. |
+| `--seed-from none` | Start only from forced seeds. Live runs still compare affected clients and promote changed intermediates. |
+| `--json` | Write one structured report to stdout, with progress on stderr. Implies `--dry-run`, even with `--yes` or `--force`. Cannot be combined with `--build-schema`. Includes seeds, deployment order, cycles, nodes, and final status; excludes payloads and credentials. |
+| `--why context.name` | Show paths from seeds to that function, then exit without deploying. Reports at most 25 paths and indicates truncation. |
+| `--hubs` | List local client functions ranked by affected server count and transitive client caller count, then exit offline. |
+| `--through-sfx` | Expand reporting through server HTTP calls. Additional callers are marked as report-only and are never added to the deployment order. |
+
+Named seeds disable initial automatic detection unless `--paths` or an explicit
+`--seed-from remote` / `specs` is supplied. Source files and directories are also
+accepted as seeds. A cache comparison checks code only, so use live comparison
+for metadata-only changes. Missing cached functions or missing implementation
+code conservatively count as changed. Missing code is common with filtered caches
+and server specifications. A missing or invalid cache stops the command. Comparison
+preserves whitespace within source lines, including multiline strings.
+
+The SDK cache does not establish the target environment; reports label its
+environment as unknown. Live runs using cached seeds still load the selected
+target, check ownership and timestamps, parse native deployment payloads,
+resolve remote client dependencies, and apply the normal confirmation and
+production safeguards. Use a live `--seed-from remote --dry-run` to verify the
+actual target before deploying.
+
+`--dry-run` (including the dry run implied by `--json`) with an explicit
+`--seed-from specs` or `none` is an offline, functions-only graph preview.
+`--why` with either of those modes is also offline.
+These modes and `--hubs` do not load an environment file, request credentials,
+parse deployment payloads, refresh schemas, or modify resume state. Supply the
+non-secret namespace (and any discovery/exclusion settings) in the process
+environment. They cannot verify target state or remote-only dependencies.
+`--why`, `--hubs`, and offline previews reject schema refresh, orphan deletion,
+and resume flags. Live JSON previews use the normal dry-run pipeline for selected
+resources; they never deploy, generate the SDK, or change resume state. Schema
+refresh is also rejected with `--json`. Without an explicit offline mode, `--why`
+and `--json` read the verified live target.
+
+```bash
+# Offline: inspect shared clients without credentials or an environment file.
+POLYAPI_NAMESPACE=example uv run --locked python cli/flow.py push-dynamic --hubs --json
+
+# Offline: compare with the last native SDK cache and include HTTP callers in the report.
+POLYAPI_NAMESPACE=example uv run --locked python cli/flow.py push-dynamic --seed-from specs --through-sfx --json
+
+# Offline: explain one forced client's path to a server.
+POLYAPI_NAMESPACE=example uv run --locked python cli/flow.py push-dynamic example.utilities.log --seed-from none --why example.sample_workflow.motd_server
+
+# Live read: validate the plan against the selected instance.
+ENVPATH=workflows/dev.env uv run --locked python cli/flow.py push-dynamic --seed-from remote --json
+```
+
+`push` retains its existing source/payload-only synchronization behavior.
+Use `push-dynamic` for nested consumer rebuilds. Both commands use the same
+resource pipeline, Python SDK parser, target pin, and SDK generation step.
 
 ## Target and update safeguards
 
@@ -91,8 +291,13 @@ the guard and unchanged checks. AI functions and Canopy compare their content
 directly. For subscriptions, `--force` has the destructive meaning described
 below.
 
-Existing secret/obscured Vari values are protected unless
-`POLY_DEPLOY_UPDATE_EXISTING_SECRET_VARIABLES=true`.
+Existing SECRET, OBSCURED, and PARTIAL Vari values are protected even with
+`--force` unless
+`POLY_DEPLOY_UPDATE_EXISTING_SECRET_VARIABLES=true`. Forced OBSCURED updates can
+change metadata while preserving the value. Protection uses both local and remote
+secrecy, and blocks recreation of a protected remote variable without that opt-in.
+Existing PARTIAL variables can receive metadata updates while preserving their
+entire value; this does not enable creation of deprecated PARTIAL variables.
 `POLY_DEPLOY_RECREATE_VARIABLE_ON_SECRECY_CHANGE` controls recreation on
 secrecy-level changes. Review these settings before modifying secret Vari.
 
@@ -204,8 +409,12 @@ functions and webhooks are excluded from orphan deletion.
 
 `--resume` reuses `.flow_resume.json` for core resources after an interrupted
 push to the same verified instance URL and environment ID. Legacy or different-target
-state is ignored. Completed entries are skipped only when their current payload
-matches the saved fingerprint; identity-only entries are reconciled again.
+state is ignored only when it has no unfinished dependency deployment. Saves
+atomically replace the previous snapshot after writing and flushing the new file.
+Unreadable or malformed state stops the run; restore a valid snapshot before
+continuing. If recovery is impossible, explicitly rebuild the affected dependency
+tree before discarding the state. Completed entries are skipped only when their
+current payload matches the saved fingerprint; identity-only entries are reconciled again.
 Trigger entries also use repository-relative paths, so matching filenames in
 different workflows remain distinct. `--force` bypasses resume skips.
 Sensitive Vari values are never fingerprinted: OBSCURED, PARTIAL, and SECRET
@@ -224,15 +433,15 @@ training, scoped cleanup, and server-function logs. Mutating commands use Flow's
 environment pin, production checks, and OTP handling. Function parsing and
 generated clients use the pinned `polyapi-python` SDK.
 
-```fish
+```bash
 # Local input preview; no provider requests.
-env ENVPATH=workflows/dev.env uv run --locked python -m cli.operations train-openapi workflows/src/sample_workflow/artefacts/specs --context example.sample_workflow --dry-run
+ENVPATH=workflows/dev.env uv run --locked python -m cli.operations train-openapi workflows/src/sample_workflow/artefacts/specs --context example.sample_workflow --dry-run
 # Translate, enrich with AI, save models, train, and regenerate the Python SDK.
-env ENVPATH=workflows/dev.env uv run --locked python -m cli.operations train-openapi workflows/src/sample_workflow/artefacts/specs --context example.sample_workflow
+ENVPATH=workflows/dev.env uv run --locked python -m cli.operations train-openapi workflows/src/sample_workflow/artefacts/specs --context example.sample_workflow
 # Preview cleanup in this exact context. Add --include-children for descendants.
-env ENVPATH=workflows/dev.env uv run --locked python -m cli.operations delete-content --context example.sample_workflow --types api-functions,variables
+ENVPATH=workflows/dev.env uv run --locked python -m cli.operations delete-content --context example.sample_workflow --types api-functions,variables
 # Retrieve a single log page from an explicitly selected server function.
-env ENVPATH=workflows/dev.env uv run --locked python -m cli.operations logs FUNCTION_ID --page 1 --page-size 100 --limit 100
+ENVPATH=workflows/dev.env uv run --locked python -m cli.operations logs FUNCTION_ID --page 1 --page-size 100 --limit 100
 ```
 
 Training accepts OpenAPI 3.x and Swagger 2.0 JSON/YAML, a file or folder, and
@@ -271,10 +480,10 @@ These commands run only when explicitly invoked.
 
 ## Schema refresh
 
-```fish
-env ENVPATH=workflows/dev.env make build-schema
+```bash
+ENVPATH=workflows/dev.env make build-schema
 uv run --locked python -m cli.schema_refresh --source designs/platform-openapi.json
-env ENVPATH=workflows/dev.env uv run --locked python cli/flow.py push --build-schema --dry-run
+ENVPATH=workflows/dev.env uv run --locked python cli/flow.py push --build-schema --dry-run
 ```
 
 `make build-schema` runs the standalone command. Schema-source precedence is:

@@ -1,8 +1,10 @@
 import json
-from typing import Any
+import re
+from typing import Any, Dict
 
 from polyapi import poly
 from polyapi.typedefs import PolyServerFunction
+from typing_extensions import TypedDict
 
 polyConfig: PolyServerFunction = {
     "name": "error_alerts",
@@ -13,50 +15,34 @@ polyConfig: PolyServerFunction = {
 }
 
 
-SENSITIVE_KEYS = {
-    "apikey",
-    "appkey",
-    "authorization",
-    "clientsecret",
-    "executionid",
-    "password",
-    "secret",
-    "token",
-    "xcorrelationid",
-}
+class AlertResult(TypedDict):
+    notified: bool
 
 
-def sanitize(value: Any, ancestors: frozenset[int] = frozenset()) -> Any:
-    """Keep diagnostic structure without credential fields or recursion failures."""
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return value
-    if id(value) in ancestors:
-        return "[Circular]"
-    if len(ancestors) >= 32:
-        return "[Maximum depth]"
-    seen = ancestors | {id(value)}
-    if isinstance(value, dict):
-        if value.get("type") == "PolyVariable":
-            return "[REDACTED]"
-        return {
-            str(key): (
-                "[REDACTED]"
-                if str(key).lower().replace("_", "").replace("-", "") in SENSITIVE_KEYS
-                else sanitize(item, seen)
+def safe_diagnostics(error: Dict[str, Any]) -> Dict[str, Any]:
+    """Select bounded platform metadata; never forward arbitrary error text."""
+    diagnostic: Dict[str, Any] = {"message": "PolyAPI function execution failed"}
+    for key in ("functionName", "functionContext"):
+        value = error.get(key)
+        if (
+            isinstance(value, str)
+            and len(value) <= 160
+            and re.fullmatch(
+                r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*){0,15}", value
             )
-            for key, item in value.items()
-        }
-    if isinstance(value, (list, tuple)):
-        return [sanitize(item, seen) for item in value]
-    # Arbitrary __str__/repr methods can expose credentials or raise exceptions.
-    return f"[{type(value).__name__}]"
+        ):
+            diagnostic[key] = value
+    status = error.get("statusCode")
+    if type(status) is int and 100 <= status <= 599:
+        diagnostic["statusCode"] = status
+    return diagnostic
 
 
-async def error_alerts(error: dict[str, Any]) -> dict[str, bool]:
+async def error_alerts(error: Dict[str, Any]) -> AlertResult:
     try:
         # Global error delivery must work even when the log level is silent.
         await poly.example.utilities.slack.send_alert(
-            {"message": json.dumps(sanitize(error))}
+            {"message": json.dumps(safe_diagnostics(error))}
         )
         return {"notified": True}
     except Exception:

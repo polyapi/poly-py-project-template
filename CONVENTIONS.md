@@ -65,6 +65,10 @@ for shared deployed functions rather than importing another deployable file.
 - For SECRET values, pass `.inject("path")` unchanged into a generated API/server
   call. Do not unwrap, cache, stringify, or pass it through a client function.
 - Use `TypedDict` from `typing_extensions` for structured runtime contracts.
+- SDK 0.3.20 deployable boundaries use `Dict`/`List`, supported scalars, or local
+  named `TypedDict` types. Builtin generics, unions, `Literal`, and `None` returns
+  can silently become `any`; verify native emitted schemas. Keep enum checks at
+  runtime. The common logging helpers return booleans instead of an untyped void.
 - Do not cache OBSCURED or SECRET values. A bounded cache of NONE configuration
   such as the log level is allowed.
 - Set HTTP response status through `polyCustom.responseStatusCode` when
@@ -72,6 +76,15 @@ for shared deployed functions rather than importing another deployable file.
 
 Flow discovers inline metadata from `client/*.py` and `server/*.py` under
 `workflows/src/`. New workflows should use this pattern.
+
+Use `push-dynamic` to rebuild local server consumers after client changes,
+including chains of client functions. Scope filters select initial changes;
+affected consumers can extend beyond that scope. Review the expanded plan before
+deploying. Keep dependency calls explicit through the generated SDK; functions
+in other repositories and runtime-built imports are outside the local graph.
+Server deployment payloads include the contexts and native SDK package requirements
+of nested Python clients. Offline graph reports do not validate deployment payloads
+or establish the target environment; use a live dry run before deploying.
 
 ## Ownership and references
 
@@ -115,7 +128,7 @@ Runtime tests use the `integration` marker and require
 an explicitly selected target.
 
 Run `make check` after changes. CI installs the locked dependencies on Python
-3.12 and runs the same command on pushes and pull requests. Live integration
+3.12.12 and runs the same command on pushes and pull requests. Live integration
 tests remain disabled in CI; no PolyAPI credentials are required. CI does not
 train APIs, refresh schemas, generate an environment SDK, or deploy resources.
 
