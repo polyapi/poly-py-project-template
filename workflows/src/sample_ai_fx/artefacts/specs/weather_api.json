@@ -1,0 +1,198 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Open-Meteo current weather",
+    "version": "1.0",
+    "description": "Open-Meteo public API for evaluation and non-commercial use. No API key or trial. See https://open-meteo.com/en/pricing and attribute data to Open-Meteo and GeoNames."
+  },
+  "servers": [
+    {
+      "url": "https://api.open-meteo.com"
+    }
+  ],
+  "paths": {
+    "/v1/forecast": {
+      "get": {
+        "operationId": "getCurrentWeather",
+        "summary": "Retrieve model-based current weather for coordinates returned by searchLocations. Values are estimates, not station observations or official alerts.",
+        "parameters": [
+          {
+            "name": "latitude",
+            "in": "query",
+            "required": true,
+            "description": "Latitude from a selected location result.",
+            "schema": {
+              "type": "number",
+              "minimum": -90,
+              "maximum": 90
+            }
+          },
+          {
+            "name": "longitude",
+            "in": "query",
+            "required": true,
+            "description": "Longitude from the same selected result.",
+            "schema": {
+              "type": "number",
+              "minimum": -180,
+              "maximum": 180
+            }
+          },
+          {
+            "name": "current",
+            "in": "query",
+            "required": true,
+            "description": "Select the current weather fields.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "temperature_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m"
+              ]
+            }
+          },
+          {
+            "name": "temperature_unit",
+            "in": "query",
+            "required": true,
+            "description": "Use Celsius.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "celsius"
+              ]
+            }
+          },
+          {
+            "name": "timezone",
+            "in": "query",
+            "required": true,
+            "description": "Use the local timezone.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "auto"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful provider response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "latitude": {
+                      "type": "number"
+                    },
+                    "longitude": {
+                      "type": "number"
+                    },
+                    "timezone": {
+                      "type": "string"
+                    },
+                    "utc_offset_seconds": {
+                      "type": "integer"
+                    },
+                    "current_units": {
+                      "type": "object",
+                      "properties": {
+                        "time": {
+                          "type": "string"
+                        },
+                        "interval": {
+                          "type": "string"
+                        },
+                        "temperature_2m": {
+                          "type": "string"
+                        },
+                        "apparent_temperature": {
+                          "type": "string"
+                        },
+                        "precipitation": {
+                          "type": "string"
+                        },
+                        "weather_code": {
+                          "type": "string"
+                        },
+                        "wind_speed_10m": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "time",
+                        "interval",
+                        "temperature_2m",
+                        "apparent_temperature",
+                        "precipitation",
+                        "weather_code",
+                        "wind_speed_10m"
+                      ]
+                    },
+                    "current": {
+                      "type": "object",
+                      "properties": {
+                        "time": {
+                          "type": "string"
+                        },
+                        "interval": {
+                          "type": "integer"
+                        },
+                        "temperature_2m": {
+                          "type": [
+                            "number",
+                            "null"
+                          ]
+                        },
+                        "apparent_temperature": {
+                          "type": [
+                            "number",
+                            "null"
+                          ]
+                        },
+                        "precipitation": {
+                          "type": [
+                            "number",
+                            "null"
+                          ]
+                        },
+                        "weather_code": {
+                          "type": [
+                            "number",
+                            "null"
+                          ],
+                          "description": "WMO weather code: 0 clear; 1 mainly clear; 2 partly cloudy; 3 overcast; 45/48 fog; 51/53/55 drizzle; 56/57 freezing drizzle; 61/63/65 rain; 66/67 freezing rain; 71/73/75 snow; 77 snow grains; 80/81/82 rain showers; 85/86 snow showers; 95 thunderstorm; 96/99 thunderstorm with hail."
+                        },
+                        "wind_speed_10m": {
+                          "type": [
+                            "number",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "time",
+                        "interval",
+                        "temperature_2m",
+                        "apparent_temperature",
+                        "precipitation",
+                        "weather_code",
+                        "wind_speed_10m"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "current_units",
+                    "current"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "description": "Retrieve model-based current weather for coordinates returned by searchLocations. Values are estimates, not station observations or official alerts."
+      }
+    }
+  }
+}

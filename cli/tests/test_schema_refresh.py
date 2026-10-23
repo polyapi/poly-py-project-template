@@ -1,8 +1,13 @@
 import copy
 import json
+from pathlib import Path
+import ssl
+import subprocess
+import sys
 from unittest.mock import Mock
 
 import pytest
+import requests
 from jsonschema import Draft7Validator
 
 from cli import schema_refresh as refresh
@@ -263,3 +268,32 @@ def test_invalid_schema_never_replaces_previous_files(tmp_path):
     with pytest.raises(refresh.SchemaRefreshError, match="invalid JSON schema"):
         refresh.refresh(tmp_path, str(source))
     assert not (tmp_path / "cli/schemas").exists()
+
+
+def test_standalone_schema_refresh_preserves_requests_tls_context():
+    # A fresh process catches the SDK truststore hook running after requests
+    # has cached its SSL context. No network or target credentials are needed.
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from cli import schema_refresh; from cli import flow; "
+            "import requests, ssl; "
+            "context = requests.adapters._preloaded_ssl_context; "
+            "context.verify_mode = ssl.CERT_REQUIRED; "
+            "assert context.verify_mode == ssl.CERT_REQUIRED; "
+            "assert context.check_hostname",
+        ],
+        cwd=Path(__file__).resolve().parents[2],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_runtime_tests_preserve_requests_tls_context():
+    context = requests.adapters._preloaded_ssl_context
+    context.verify_mode = ssl.CERT_REQUIRED
+    assert context.verify_mode == ssl.CERT_REQUIRED
+    assert context.check_hostname

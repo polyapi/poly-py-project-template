@@ -19,7 +19,7 @@ cli/                         Python Flow and its regression tests
 designs/examples/            Canopy and subscription starter JSON
 workflows/src/
   sample_workflow/           Message-of-the-day webhook workflow
-  sample_ai_fx/              Weather AI with tools and secret binding
+  sample_ai_fx/              Weather AI with no-key weather tools
   utilities/common/         Logging and global error notifications
 pyproject.toml               Runtime and development dependencies
 uv.lock                     Reproducible dependency versions
@@ -53,8 +53,11 @@ make check
 uv run --locked python cli/flow.py push --help
 ```
 
-Python is pinned to 3.12.12 in `.python-version`, `pyproject.toml`, and CI to
-match the verified SDK 0.3.20 server base image.
+Python is pinned to 3.12.12 in `.python-version` and CI to match the verified
+SDK 0.3.20 server base image. `pyproject.toml` permits compatible 3.12 patch
+releases (`>=3.12.12,<3.13`) because Dependabot may resolve dependencies with a
+newer 3.12 interpreter. This compatibility range does not change the setup or
+CI runtime pin.
 
 Local checks need no API key and do not deploy anything. The SDK is pinned to
 `polyapi-python==0.3.20`. Review SDK upgrades and regenerate `uv.lock`
@@ -121,16 +124,21 @@ functions; the SDK generation command is shown below.
 
 For multiple owned roots, `POLYAPI_NAMESPACES=example,second` takes precedence.
 
+Choose a namespace that is a valid Python dotted context and is unique to your
+project within the target environment, such as `my_project`. It groups the
+resources Flow owns; it does not select the instance or environment or grant
+access. The base URL, API key, and environment ID identify the target.
+
 Replace `example` consistently in local contexts, generated SDK calls,
 portable references, job/trigger names, webhook slugs, and Canopy subpaths:
 
 ```bash
-rg -n '\bexample\b' workflows/src designs/examples
+rg -n '\bexample(?:\b|_)' workflows/src designs/examples
 ```
 
-Keep external function contexts such as `OOB.polyapi.internal.alerting`
-unchanged. Environment files, generated SDK state in `.venv/`, and Flow's
-resume state are ignored by Git.
+Keep external function contexts such as `OOB.polyapi.internal.alerting` and
+provider URLs unchanged. Environment files, generated SDK state in `.venv/`,
+and Flow's resume state are ignored by Git.
 
 ## Train, preview, and deploy the sample
 
@@ -164,8 +172,10 @@ uv run --locked --env-file workflows/dev.env python -m polyapi generate
 ```
 
 A full push also includes common utilities and the enabled weather AI function.
-Configure its AccuWeather secret, accessible tools, provider/model, and the
-utility log/channel settings before invoking them. The global error notification
+Train its bundled Open-Meteo specs using the [weather setup](workflows/src/sample_ai_fx/OVERVIEW.md),
+and configure the AI provider/model and utility log/channel settings before
+invoking them. The weather API needs no account, key, or trial for evaluation;
+AI execution can still incur model-provider usage. The global error notification
 trigger starts enabled; the sample scheduled job starts disabled.
 Canopy and subscription starter JSON stays under `designs/examples/` until
 you configure it and move it into a workflow's `artefacts/` directory.
@@ -185,7 +195,9 @@ uv run --locked pytest workflows/src/sample_workflow/tests/test_motd.py
 ```
 
 After deploying the sample, set `POLY_TEST_WEBHOOK_URL` in the selected env
-file to the exact deployed webhook URL, then explicitly opt into runtime tests:
+file to the webhook `url` returned by PolyAPI or displayed in Canopy. Webhook
+execution uses an environment subdomain, so do not build this URL by appending
+`/apis/...` to `POLY_API_BASE_URL`. Then explicitly opt into runtime tests:
 
 ```bash
 RUN_POLY_INTEGRATION=true uv run --locked --env-file workflows/dev.env pytest -m integration
@@ -200,7 +212,7 @@ jobs, trains APIs, deploys resources, sends alerts, or recreates live streams.
 | Component | Purpose |
 | --- | --- |
 | Message-of-the-day workflow | Calls external joke/advice APIs using Vari configuration and secret injection; includes a security function, webhook, trigger, and scheduled job |
-| Weather AI | Uses two AccuWeather tools, secret bindings, and structured output |
+| Weather AI | Uses bundled Open-Meteo tools without a weather key or trial, with structured output and attribution |
 | Shared utilities | Provides log filtering, recursive redaction, Slack alerts, and a global error handler |
 | Flow | Validates and synchronizes functions and platform resources; rebuilds nested client consumers and provides offline graph reports |
 | Canopy | Creates applications and synchronizes their configuration and descriptions |

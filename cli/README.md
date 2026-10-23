@@ -308,9 +308,12 @@ Do not put resolved secrets in artefact files.
 ## AI functions
 
 See `workflows/src/sample_ai_fx/artefacts/ai-functions/uplifting_weather.json`.
-The enabled weather AI example uses two AccuWeather tools and the SECRET
-`weather_api_key` binding. The environment must provide
-those tools, the selected model/provider, and the secret value before invocation.
+The enabled weather AI example uses two Open-Meteo API tools trained from its
+bundled specifications. It needs no weather account, API key, or trial for
+evaluation. Follow [the weather setup](../workflows/src/sample_ai_fx/OVERVIEW.md)
+to train those tools in the project namespace before deploying the AI function.
+The target still needs the selected AI model/provider. Generic variable-backed
+tool arguments remain supported as shown below.
 
 Tool references use exact accessible API, server, or client functions:
 

@@ -14,6 +14,10 @@ from urllib.parse import unquote, urlsplit
 
 from jsonschema import Draft7Validator
 from jsonschema.exceptions import SchemaError
+
+# SDK initialization installs the TLS context before requests caches one.
+from cli import flow
+
 import requests
 import yaml
 
@@ -321,8 +325,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--source", help="OpenAPI URL or local JSON/YAML file")
     parser.add_argument("--designs-dir", type=Path)
     args = parser.parse_args(argv)
-    from cli import flow
-
     repo = Path(__file__).resolve().parents[1]
     flow.load_env(repo)
     refresh(repo, args.source, args.designs_dir)

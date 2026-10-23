@@ -87,8 +87,8 @@ def test_skip_invalid_excludes_only_failed_paths_and_disables_orphans(
     client.request.assert_not_called()
 
 
-def test_all_template_inputs_pass_preflight(monkeypatch):
-    monkeypatch.setenv("POLYAPI_NAMESPACE", "example")
+def test_all_template_inputs_pass_preflight(monkeypatch, sample_namespace):
+    monkeypatch.setenv("POLYAPI_NAMESPACE", sample_namespace)
     monkeypatch.delenv("POLYAPI_NAMESPACES", raising=False)
     args = flow.CliArgs(True, False, False, False, (), None, False)
     config = flow.build_config(Path(__file__).resolve().parents[2], args)
@@ -257,8 +257,10 @@ def test_helpers_without_deployable_metadata_remain_ignored(tmp_path, source):
     assert flow.load_function_specs_from_python(path) == []
 
 
-def test_maintained_functions_emit_native_sdk_boundary_contracts(monkeypatch):
-    monkeypatch.setenv("POLYAPI_NAMESPACE", "example")
+def test_maintained_functions_emit_native_sdk_boundary_contracts(
+    monkeypatch, sample_namespace
+):
+    monkeypatch.setenv("POLYAPI_NAMESPACE", sample_namespace)
     monkeypatch.delenv("POLYAPI_NAMESPACES", raising=False)
     monkeypatch.setattr(flow, "get_execution_api_key", lambda: None)
     args = flow.parse_args(["push", "--types", "functions", "--dry-run"])

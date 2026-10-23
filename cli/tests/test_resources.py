@@ -512,8 +512,10 @@ def test_response_error_never_exposes_provider_body(monkeypatch):
     assert "synthetic-secret" not in str(exc.value)
 
 
-def test_every_sample_function_builds_with_real_sdk_parser(monkeypatch):
-    monkeypatch.setenv("POLYAPI_NAMESPACE", "example")
+def test_every_sample_function_builds_with_real_sdk_parser(
+    monkeypatch, sample_namespace
+):
+    monkeypatch.setenv("POLYAPI_NAMESPACE", sample_namespace)
     root = Path(__file__).resolve().parents[2]
     args = flow.CliArgs(True, False, False, False, (), None, False)
     config = flow.build_config(root, args)
@@ -634,9 +636,16 @@ def test_duplicate_named_trigger_is_not_selected_arbitrarily():
         )
 
 
-def test_sample_artefacts_resolve_using_the_sample_functions(settings):
+def test_sample_artefacts_resolve_using_the_sample_functions(
+    settings, sample_namespace
+):
     config, args, logger, _ = settings
-    config = replace(config, repo_root=Path(__file__).resolve().parents[2])
+    config = replace(
+        config,
+        repo_root=Path(__file__).resolve().parents[2],
+        namespace=sample_namespace,
+        namespaces=(sample_namespace,),
+    )
     registry = flow.FunctionRegistry()
     for spec in flow.load_function_specs(config, args, logger):
         registry.upsert(
@@ -663,26 +672,23 @@ def test_sample_artefacts_resolve_using_the_sample_functions(settings):
         assert payload["functions"][0]["eventPayload"]["mood"] == "wise"
     for item in flow.extra_resource_files(config, args, "ai-functions"):
         tools = [
-            {"id": "search", "name": "search", "context": "accuWeather.locations"},
             {
-                "id": "conditions",
-                "name": "getByLocationKey",
-                "context": "accuWeather.currentConditions",
-            },
-        ]
-        variables = [
-            {
-                "id": "weather-secret",
-                "name": "weather_api_key",
-                "context": "example.sample_ai_fx",
+                "id": name,
+                "name": name,
+                "context": f"{sample_namespace}.sample_ai_fx",
             }
+            for name in ("searchLocations", "getCurrentWeather")
         ]
-        payload = flow.resolve_ai_payload(item.data, tools, variables, config)
+        payload = flow.resolve_ai_payload(item.data, tools, [], config)
         assert payload["enabled"]
-        assert len(payload["toolFunctions"]) == 2
+        assert {tool["id"] for tool in payload["toolFunctions"]} == {
+            "searchLocations",
+            "getCurrentWeather",
+        }
         assert all(
-            tool["argumentConfig"][1]["variableId"] == "weather-secret"
+            argument["source"] in {"ai", "hardcoded"}
             for tool in payload["toolFunctions"]
+            for argument in tool["argumentConfig"]
         )
 
 
@@ -835,9 +841,14 @@ def test_namespaced_job_may_reference_shared_server_function(settings):
         )
 
 
-def test_sample_webhook_keeps_its_declared_schema(settings):
+def test_sample_webhook_keeps_its_declared_schema(settings, sample_namespace):
     config, args, logger, _ = settings
-    config = replace(config, repo_root=Path(__file__).resolve().parents[2])
+    config = replace(
+        config,
+        repo_root=Path(__file__).resolve().parents[2],
+        namespace=sample_namespace,
+        namespaces=(sample_namespace,),
+    )
     registry = flow.FunctionRegistry()
     for spec in flow.load_function_specs(config, args, logger):
         registry.upsert(
@@ -851,9 +862,16 @@ def test_sample_webhook_keeps_its_declared_schema(settings):
     flow.validate_endpoint_payload("UpdateWebhookHandleDto", payload)
 
 
-def test_all_sample_functions_build_with_the_pinned_python_parser(settings):
+def test_all_sample_functions_build_with_the_pinned_python_parser(
+    settings, sample_namespace
+):
     config, args, logger, _ = settings
-    config = replace(config, repo_root=Path(__file__).resolve().parents[2])
+    config = replace(
+        config,
+        repo_root=Path(__file__).resolve().parents[2],
+        namespace=sample_namespace,
+        namespaces=(sample_namespace,),
+    )
     specs = flow.load_function_specs(config, args, logger)
     assert len(specs) == 7
     for spec in specs:
@@ -873,9 +891,16 @@ def test_unavailable_shared_scope_is_not_confused_with_provider_failure(status):
         assert flow.list_optional_scope_resources(client, path) == []
 
 
-def test_first_deployment_dry_run_resolves_local_functions_webhook_and_job(settings):
+def test_first_deployment_dry_run_resolves_local_functions_webhook_and_job(
+    settings, sample_namespace
+):
     config, args, logger, summary = settings
-    config = replace(config, repo_root=Path(__file__).resolve().parents[2])
+    config = replace(
+        config,
+        repo_root=Path(__file__).resolve().parents[2],
+        namespace=sample_namespace,
+        namespaces=(sample_namespace,),
+    )
     args = replace(
         args,
         dry_run=True,
@@ -940,9 +965,16 @@ def test_first_deployment_dry_run_resolves_local_functions_webhook_and_job(setti
     assert not client.writes
 
 
-def test_weather_dry_run_resolves_new_secret_metadata_without_creating_it(settings):
+def test_weather_dry_run_resolves_owned_tools_without_a_secret(
+    settings, sample_namespace
+):
     config, args, logger, summary = settings
-    config = replace(config, repo_root=Path(__file__).resolve().parents[2])
+    config = replace(
+        config,
+        repo_root=Path(__file__).resolve().parents[2],
+        namespace=sample_namespace,
+        namespaces=(sample_namespace,),
+    )
     args = replace(
         args,
         dry_run=True,
@@ -954,13 +986,56 @@ def test_weather_dry_run_resolves_new_secret_metadata_without_creating_it(settin
         for suffix in ("", "/tenant", "/public")
     }
     responses.update({"/functions/ai": [], "/variables": []})
-    responses["/functions/api/public"] = [
-        {"id": "search", "context": "accuWeather.locations", "name": "search"},
+    responses["/functions/api"] = [
         {
-            "id": "conditions",
-            "context": "accuWeather.currentConditions",
-            "name": "getByLocationKey",
-        },
+            "id": name,
+            "context": f"{sample_namespace}.sample_ai_fx",
+            "name": name,
+        }
+        for name in ("searchLocations", "getCurrentWeather")
+    ]
+    client = FakeClient(responses)
+    assert flow.sync_ai_functions(client, config, args, logger, summary)
+    assert summary.ai_functions.created == 1
+    assert not client.writes
+
+
+def test_ai_dry_run_resolves_new_secret_metadata_without_creating_it(settings):
+    config, args, logger, summary = settings
+    args = replace(args, dry_run=True)
+    artefact(
+        config,
+        "vari",
+        {"name": "token", "context": "example.demo", "secrecy": "SECRET", "value": {}},
+    )
+    artefact(
+        config,
+        "ai-functions",
+        ai_function(
+            toolFunctions=[
+                {
+                    "functionName": "lookup",
+                    "functionContext": "public.tools",
+                    "argumentConfig": [
+                        {
+                            "key": "key",
+                            "source": "variable",
+                            "variableName": "token",
+                            "variableContext": "example.demo",
+                        }
+                    ],
+                }
+            ]
+        ),
+    )
+    responses = {
+        f"/functions/{kind}{suffix}": []
+        for kind in ("api", "server", "client")
+        for suffix in ("", "/tenant", "/public")
+    }
+    responses.update({"/functions/ai": [], "/variables": []})
+    responses["/functions/api/public"] = [
+        {"id": "tool", "context": "public.tools", "name": "lookup"}
     ]
     client = FakeClient(responses)
     assert flow.sync_ai_functions(client, config, args, logger, summary)

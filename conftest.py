@@ -1,7 +1,11 @@
 """Keep deployed tests opt-in and unit tests independent of saved SDK identity."""
 
+import json
 import os
+from pathlib import Path
 
+# Initialize the SDK before requests creates its cached TLS context.
+import polyapi  # noqa: F401
 import pytest
 import requests
 
@@ -23,3 +27,15 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     for item in items:
         if "integration" in item.keywords:
             item.add_marker(disabled)
+
+
+@pytest.fixture
+def sample_namespace() -> str:
+    """Read the customized sample root without loading target credentials."""
+    artifact = (
+        Path(__file__).parent
+        / "workflows/src/sample_workflow/artefacts/vari/advice_api_config.json"
+    )
+    context = json.loads(artifact.read_text())["context"]
+    assert context.endswith(".sample_workflow")
+    return context.removesuffix(".sample_workflow")

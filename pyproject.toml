@@ -2,7 +2,8 @@
 name = "poly-py-project-template"
 version = "0.1.0"
 description = "Generic Python PolyAPI workflow project template"
-requires-python = "==3.12.12"
+# Runtime stays pinned in .python-version and CI; resolvers may use newer 3.12 patches.
+requires-python = ">=3.12.12,<3.13"
 dependencies = [
     "jsonschema==4.26.0",
     "polyapi-python==0.3.20",

@@ -51,6 +51,10 @@ value never enters the client function: `.inject("hostUrl")` goes
 unchanged into `getRandomJoke_async`. Direct API execution is rejected for this
 path because it cannot resolve injected references.
 
+Use Canopy to set this object-valued secret. In SDK 0.3.20, generated Vari
+`update()` / `update_async()` methods form-encode Python dictionaries instead
+of sending JSON objects; they do not preserve this configuration correctly.
+
 `example.sample_workflow.advice_api_config` is OBSCURED and initially contains
 `{"hostUrl":"https://api.adviceslip.com"}`. OBSCURED permits runtime reads while
 masking the UI. Python's `get_async()` returns JSON text, so the client decodes
@@ -86,6 +90,8 @@ RUN_POLY_INTEGRATION=true uv run --locked --env-file workflows/dev.env pytest wo
 ```
 
 The live tests require `POLY_TEST_WEBHOOK_URL`, a configured secret, and deployed
-API functions/workflow resources. Unit tests assert the opaque injection reference
+API functions/workflow resources. Use the webhook `url` from PolyAPI or Canopy,
+including its environment subdomain; the gateway base URL alone will not route
+webhook execution. Unit tests assert the opaque injection reference
 reaches the generated API boundary by identity; that proves caller behavior,
 not live platform resolution.

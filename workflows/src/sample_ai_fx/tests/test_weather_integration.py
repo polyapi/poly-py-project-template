@@ -30,3 +30,6 @@ async def test_deployed_weather_guidance():
     )
     validate(result, artifact["outputSchema"])
     assert result["location"] and result["description"] and result["upliftingMessage"]
+    assert result["currentWeather"] is not None
+    assert result["currentWeather"]["unit"] == "C"
+    assert "https://open-meteo.com/" in result["attribution"]

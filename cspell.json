@@ -41,7 +41,6 @@
     "/%[0-9A-Fa-f]{2}/g"
   ],
   "words": [
-    "Accu",
     "addopts",
     "apikey",
     "appkey",
@@ -58,7 +57,9 @@
     "ENVPATH",
     "executionid",
     "fromlist",
+    "GeoNames",
     "kwonlyargs",
+    "Meteo",
     "modifyitems",
     "noauth",
     "NOSYSTEM",
@@ -73,6 +74,7 @@
     "testpaths",
     "timespec",
     "timestamptz",
+    "truststore",
     "unawaited",
     "unconfigured",
     "unsuffixed",

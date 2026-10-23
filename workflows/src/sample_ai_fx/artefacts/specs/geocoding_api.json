@@ -1,0 +1,125 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Open-Meteo location search",
+    "version": "1.0",
+    "description": "Open-Meteo public API for evaluation and non-commercial use. No API key or trial. See https://open-meteo.com/en/pricing and attribute data to Open-Meteo and GeoNames."
+  },
+  "servers": [
+    {
+      "url": "https://geocoding-api.open-meteo.com"
+    }
+  ],
+  "paths": {
+    "/v1/search": {
+      "get": {
+        "operationId": "searchLocations",
+        "summary": "Find city coordinates. An absent or empty results array means no match; never invent coordinates.",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "query",
+            "required": true,
+            "description": "City name, optionally followed by a country or region, such as London, United Kingdom.",
+            "schema": {
+              "type": "string",
+              "minLength": 2
+            }
+          },
+          {
+            "name": "count",
+            "in": "query",
+            "required": true,
+            "description": "Return at most three candidates.",
+            "schema": {
+              "type": "integer",
+              "enum": [
+                3
+              ]
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "required": true,
+            "description": "Return English location names.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "en"
+              ]
+            }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "required": true,
+            "description": "Return JSON.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "json"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful provider response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "results": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "integer"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "latitude": {
+                            "type": "number"
+                          },
+                          "longitude": {
+                            "type": "number"
+                          },
+                          "country": {
+                            "type": "string"
+                          },
+                          "country_code": {
+                            "type": "string"
+                          },
+                          "admin1": {
+                            "type": "string"
+                          },
+                          "timezone": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "name",
+                          "latitude",
+                          "longitude"
+                        ]
+                      }
+                    },
+                    "generationtime_ms": {
+                      "type": "number"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Find city coordinates. An absent or empty results array means no match; never invent coordinates."
+      }
+    }
+  }
+}

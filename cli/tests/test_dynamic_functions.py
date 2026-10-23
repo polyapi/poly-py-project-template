@@ -2606,8 +2606,18 @@ def test_root_resource_generation_and_scope_guards(
     "method", ["get", "get_async", "inject", "update", "update_async", "onUpdate"]
 )
 def test_root_vari_methods_and_aliases_preserve_empty_context(
-    tmp_path, imports, reference, method
+    tmp_path, monkeypatch, imports, reference, method
 ):
+    import sys
+    import types
+
+    import polyapi
+
+    # This synthetic root Vari belongs to the fixture, not the developer's SDK.
+    variables = types.ModuleType("polyapi.vari")
+    variables.__dict__["root_setting"] = object()
+    monkeypatch.setitem(sys.modules, "polyapi.vari", variables)
+    monkeypatch.setitem(polyapi.__dict__, "vari", variables)
     path = tmp_path / "worker_sfx.py"
     path.write_text(
         f"{imports}\nfrom polyapi import poly\n"
@@ -3731,8 +3741,20 @@ def test_unselected_local_resource_does_not_override_root_scope_guard(
     "use", ["child", "unused", "missing", "root_call", "root_value"]
 )
 def test_vari_module_collision_preserves_narrowing_and_root_guards(
-    project, dynamic, form, use
+    project, monkeypatch, dynamic, form, use
 ):
+    import sys
+    import types
+
+    import polyapi
+
+    # The fake platform's catalog must not come from the developer's SDK.
+    variables = types.ModuleType("polyapi.vari")
+    catalog = types.ModuleType("polyapi.vari.catalog")
+    variables.__dict__["catalog"] = catalog
+    monkeypatch.setitem(sys.modules, "polyapi.vari", variables)
+    monkeypatch.setitem(sys.modules, "polyapi.vari.catalog", catalog)
+    monkeypatch.setitem(polyapi.__dict__, "vari", variables)
     config, args, logger, client, state, files = project
     config = replace(config, orphan_excluded_contexts=("catalog.bad",))
     selection = '["example"]' if use == "missing" else '["example", "catalog.good"]'
