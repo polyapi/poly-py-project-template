@@ -4,7 +4,7 @@ import json
 import os
 from pathlib import Path
 
-# Initialize the SDK before requests creates its cached TLS context.
+# Initialize the SDK's TLS configuration before loading HTTP clients.
 import polyapi  # noqa: F401
 import pytest
 import requests

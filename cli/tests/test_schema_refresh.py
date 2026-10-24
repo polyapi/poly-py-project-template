@@ -1,10 +1,11 @@
 import copy
+from contextlib import closing
 import json
 from pathlib import Path
 import ssl
 import subprocess
 import sys
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 import requests
@@ -270,19 +271,36 @@ def test_invalid_schema_never_replaces_previous_files(tmp_path):
     assert not (tmp_path / "cli/schemas").exists()
 
 
+def assert_requests_tls_verification():
+    class ContextVerified(Exception):
+        pass
+
+    def inspect_tls_context(*args, ssl_context, server_hostname, **kwargs):
+        assert ssl_context.verify_mode == ssl.CERT_REQUIRED
+        assert ssl_context.check_hostname
+        assert server_hostname == "poly.example.invalid"
+        raise ContextVerified
+
+    request = requests.Request("GET", "https://poly.example.invalid").prepare()
+    with (
+        patch("urllib3.connection.HTTPSConnection._new_conn", return_value=Mock()),
+        patch("urllib3.connection.ssl_wrap_socket", side_effect=inspect_tls_context),
+        closing(requests.adapters.HTTPAdapter()) as adapter,
+        pytest.raises(ContextVerified),
+    ):
+        adapter.send(request, verify=True, proxies={}, timeout=1)
+
+
 def test_standalone_schema_refresh_preserves_requests_tls_context():
-    # A fresh process catches the SDK truststore hook running after requests
-    # has cached its SSL context. No network or target credentials are needed.
+    # Exercise Requests' real TLS setup after SDK initialization in a fresh
+    # process, stopping before any network connection or TLS handshake.
     result = subprocess.run(
         [
             sys.executable,
             "-c",
-            "from cli import schema_refresh; from cli import flow; "
-            "import requests, ssl; "
-            "context = requests.adapters._preloaded_ssl_context; "
-            "context.verify_mode = ssl.CERT_REQUIRED; "
-            "assert context.verify_mode == ssl.CERT_REQUIRED; "
-            "assert context.check_hostname",
+            "from cli import schema_refresh; "
+            "from cli.tests.test_schema_refresh import assert_requests_tls_verification; "
+            "assert_requests_tls_verification()",
         ],
         cwd=Path(__file__).resolve().parents[2],
         capture_output=True,
@@ -293,7 +311,4 @@ def test_standalone_schema_refresh_preserves_requests_tls_context():
 
 
 def test_runtime_tests_preserve_requests_tls_context():
-    context = requests.adapters._preloaded_ssl_context
-    context.verify_mode = ssl.CERT_REQUIRED
-    assert context.verify_mode == ssl.CERT_REQUIRED
-    assert context.check_hostname
+    assert_requests_tls_verification()

@@ -15,7 +15,7 @@ from urllib.parse import unquote, urlsplit
 from jsonschema import Draft7Validator
 from jsonschema.exceptions import SchemaError
 
-# SDK initialization installs the TLS context before requests caches one.
+# Initialize the SDK's TLS configuration before loading HTTP clients.
 from cli import flow
 
 import requests

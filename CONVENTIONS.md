@@ -65,7 +65,7 @@ for shared deployed functions rather than importing another deployable file.
 - For SECRET values, pass `.inject("path")` unchanged into a generated API/server
   call. Do not unwrap, cache, stringify, or pass it through a client function.
 - Use `TypedDict` from `typing_extensions` for structured runtime contracts.
-- SDK 0.3.20 deployable boundaries use `Dict`/`List`, supported scalars, or local
+- SDK 0.3.21.dev1 deployable boundaries use `Dict`/`List`, supported scalars, or local
   named `TypedDict` types. Builtin generics, unions, `Literal`, and `None` returns
   can silently become `any`; verify native emitted schemas. Keep enum checks at
   runtime. The common logging helpers return booleans instead of an untyped void.

@@ -54,14 +54,16 @@ uv run --locked python cli/flow.py push --help
 ```
 
 Python is pinned to 3.12.12 in `.python-version` and CI to match the verified
-SDK 0.3.20 server base image. `pyproject.toml` permits compatible 3.12 patch
+server runtime. `pyproject.toml` permits compatible 3.12 patch
 releases (`>=3.12.12,<3.13`) because Dependabot may resolve dependencies with a
 newer 3.12 interpreter. This compatibility range does not change the setup or
 CI runtime pin.
 
 Local checks need no API key and do not deploy anything. The SDK is pinned to
-`polyapi-python==0.3.20`. Review SDK upgrades and regenerate `uv.lock`
-together.
+`polyapi-python==0.3.21.dev1`. This prerelease includes the Requests 2.33.0
+and Socket.IO 5.16.2 dependency fixes. Review SDK upgrades and regenerate
+`uv.lock` together. The local SDK pin does not change platform-managed
+server-function images.
 
 Workflows and Flow tooling run in Python.
 After configuring a target, use `ENVPATH=workflows/dev.env make build-schema`
