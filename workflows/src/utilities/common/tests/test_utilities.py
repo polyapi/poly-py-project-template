@@ -1,7 +1,9 @@
+import importlib
 import importlib.util
 import json
+import sys
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock
 
 import polyapi
@@ -24,6 +26,7 @@ def load_source(relative):
 def sdk(monkeypatch):
     level = AsyncMock(return_value="info")
     channel = AsyncMock(return_value="synthetic-channel")
+    workspace = AsyncMock(return_value="community")
     send, alert, log = AsyncMock(), AsyncMock(), AsyncMock()
     monkeypatch.setitem(
         polyapi.__dict__,
@@ -31,9 +34,12 @@ def sdk(monkeypatch):
         SimpleNamespace(
             example=SimpleNamespace(
                 configurations=SimpleNamespace(
-                    logging=SimpleNamespace(log_level=SimpleNamespace(get_async=level)),
+                    log_settings=SimpleNamespace(
+                        log_level=SimpleNamespace(get_async=level)
+                    ),
                     slack=SimpleNamespace(
-                        channel_id=SimpleNamespace(get_async=channel)
+                        channel_id=SimpleNamespace(get_async=channel),
+                        workspace_type=SimpleNamespace(get_async=workspace),
                     ),
                 )
             )
@@ -63,8 +69,68 @@ def sdk(monkeypatch):
         SimpleNamespace(executionId="synthetic-execution"),
     )
     return SimpleNamespace(
-        level=level, channel=channel, send=send, alert=alert, log=log
+        level=level,
+        channel=channel,
+        workspace=workspace,
+        send=send,
+        alert=alert,
+        log=log,
     )
+
+
+@pytest.mark.parametrize(
+    "configured_level, severity, expected",
+    [
+        ("info", "debug", False),
+        ("warn", "info", False),
+        ("warn", "warn", True),
+        ("silent", "fatal", False),
+    ],
+)
+async def test_configured_level_through_native_generated_vari(
+    sdk, tmp_path, monkeypatch, capsys, configured_level, severity, expected
+):
+    from polyapi import execute, variables
+
+    artifact = json.loads((COMMON / "artefacts/vari/log_level_vari.json").read_text())
+    package_name = f"log_sdk_probe_{configured_level}_{severity}"
+    package = tmp_path / package_name
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    # Generate with the installed SDK; do not replace namespace imports with mocks.
+    monkeypatch.setattr(variables, "__file__", str(package / "variables.py"))
+    variables.create_variable(
+        {
+            "id": "synthetic-log-level",
+            "type": "serverVariable",
+            "context": artifact["context"],
+            "name": artifact["name"],
+            "variable": {
+                "secrecy": artifact["secrecy"],
+                "valueType": {"kind": "plain", "value": "string"},
+            },
+        }
+    )
+    # Full generation supplies this sibling; no listener or real SDK identity is used.
+    client_id = ModuleType("polyapi.poly.client_id")
+    client_id.__dict__["client_id"] = "synthetic-client"
+    monkeypatch.setitem(sys.modules, "polyapi.poly.client_id", client_id)
+    getter = AsyncMock(return_value=SimpleNamespace(text=configured_level))
+    monkeypatch.setattr(execute, "variable_get_async", getter)
+    monkeypatch.syspath_prepend(str(tmp_path))
+    try:
+        generated = importlib.import_module(f"{package_name}.vari")
+        monkeypatch.setitem(polyapi.__dict__, "vari", generated)
+        log = load_source("client/log_cfx.py").log
+        assert await log(severity, "function", "threshold_probe") is expected
+        getter.assert_awaited_once_with("synthetic-log-level")
+        output = capsys.readouterr()
+        assert ("threshold_probe" in output.out + output.err) is expected
+        sdk.alert.assert_not_called()
+    finally:
+        for name in tuple(sys.modules):
+            if name == package_name or name.startswith(package_name + "."):
+                sys.modules.pop(name)
 
 
 async def test_log_redacts_nested_fields_and_alerts_on_errors(sdk, capsys):
@@ -134,11 +200,16 @@ async def test_silent_disables_logs_and_alerts(sdk, capsys):
     sdk.alert.assert_not_called()
 
 
-async def test_alert_uses_exact_sdk_and_logs_matching_correlation(sdk):
+@pytest.mark.parametrize("workspace", ["community", "internal"])
+async def test_alert_uses_exact_sdk_and_logs_matching_correlation(sdk, workspace):
+    sdk.workspace.return_value = workspace
     await load_source("client/send_alert_cfx.py").send_alert({"message": "Safe event"})
     sdk.channel.assert_awaited_once_with()
     payload = sdk.send.await_args.args[0]
     assert payload["slack"]["channelId"] == "synthetic-channel"
+    assert payload["slack"]["type"] == workspace
+    sdk.workspace.assert_awaited_once_with()
+    assert payload["pagerDuty"] == {"levels": []}
     assert payload["executionId"] == "synthetic-execution"
     assert payload["message"] == "Safe event"
     calls = sdk.log.await_args_list
@@ -229,3 +300,14 @@ async def test_utility_boolean_results_and_read_only_default_context(sdk, capsys
         await load_source("client/send_alert_cfx.py").send_alert({"message": "safe"})
         is True
     )
+
+
+@pytest.mark.parametrize("workspace", ["", "unexpected", None, {}, []])
+async def test_invalid_workspace_prevents_delivery(sdk, workspace):
+    sdk.workspace.return_value = workspace
+    with pytest.raises(ValueError, match="workspace type"):
+        await load_source("client/send_alert_cfx.py").send_alert(
+            {"message": "Safe event"}
+        )
+    sdk.send.assert_not_called()
+    sdk.log.assert_not_called()

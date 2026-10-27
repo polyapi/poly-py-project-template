@@ -1,6 +1,6 @@
 {
   "name": "log_level",
-  "context": "example.configurations.logging",
+  "context": "example.configurations.log_settings",
   "description": "Minimum runtime log level: debug, info, warn, error, fatal, or silent.",
   "value": "{{LOG_LEVEL}}",
   "secrecy": "NONE",

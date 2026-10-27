@@ -70,7 +70,9 @@ async def log(
     if now - _refreshed_at >= 60:
         _refreshed_at = now
         try:
-            configured = await vari.example.configurations.logging.log_level.get_async()
+            configured = (
+                await vari.example.configurations.log_settings.log_level.get_async()
+            )
             normalized = configured.strip().lower()
             if normalized in LEVELS:
                 _log_level = normalized

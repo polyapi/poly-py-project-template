@@ -1,7 +1,7 @@
 {
   "name": "channel_id",
   "context": "example.configurations.slack",
-  "description": "Slack community channel for workflow error and fatal alerts.",
+  "description": "Slack destination in the selected workspace for workflow error and fatal alerts.",
   "value": "{{SLACK_CHANNEL_ID}}",
   "secrecy": "NONE",
   "visibility": "ENVIRONMENT"

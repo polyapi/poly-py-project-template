@@ -23,6 +23,9 @@ async def send_alert(args: AlertArgs) -> bool:
     channel_id = await vari.example.configurations.slack.channel_id.get_async()
     if not isinstance(channel_id, str) or not channel_id.strip():
         raise ValueError("Slack channel is not configured")
+    workspace_type = await vari.example.configurations.slack.workspace_type.get_async()
+    if workspace_type not in ("community", "internal"):
+        raise ValueError("Slack workspace type must be community or internal")
     await poly.example.utilities.log(
         "info",
         "send_alert",
@@ -38,10 +41,11 @@ async def send_alert(args: AlertArgs) -> bool:
             "name": "PolyAPI workflow alert",
             "message": args["message"],
             "slack": {
-                "type": "community",
+                "type": workspace_type,
                 "channelId": channel_id,
                 "levels": ["error"],
             },
+            "pagerDuty": {"levels": []},
             "executionId": polyCustom.executionId,
         }
     )

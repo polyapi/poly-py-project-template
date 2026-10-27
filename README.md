@@ -104,7 +104,7 @@ Edit the copy with your target's values:
 | Variable | Purpose |
 | --- | --- |
 | `POLYAPI_NAMESPACE` | Root context owned by this project; the sample uses `example` |
-| `LOG_LEVEL` / `SLACK_CHANNEL_ID` | Log threshold and alert channel when deploying common utilities |
+| `LOG_LEVEL` / `SLACK_CHANNEL_ID` / `SLACK_WORKSPACE_TYPE` | Log threshold, Slack destination, and `community` or `internal` workspace when deploying common utilities |
 | `POLY_API_BASE_URL` | Base URL of your selected PolyAPI instance |
 | `POLY_API_KEY` | Key for the selected environment |
 | `POLY_EXEC_API_KEY` | Execution key for deployed server functions; required when production safeguards apply |

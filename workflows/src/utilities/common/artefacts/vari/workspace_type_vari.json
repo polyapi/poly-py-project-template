@@ -1,0 +1,8 @@
+{
+  "name": "workspace_type",
+  "context": "example.configurations.slack",
+  "description": "Slack workspace for alerts: community or internal.",
+  "value": "{{SLACK_WORKSPACE_TYPE}}",
+  "secrecy": "NONE",
+  "visibility": "ENVIRONMENT"
+}
