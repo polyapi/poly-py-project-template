@@ -17,6 +17,7 @@ local skill below for the behavior being implemented or reviewed.
 | Webhooks, API calls, or secret injection | [Sample workflow](workflows/src/sample_workflow/OVERVIEW.md) |
 | AI tools and structured weather output | [Weather AI](workflows/src/sample_ai_fx/OVERVIEW.md) |
 | Logging or error notifications | [Common utilities](workflows/src/utilities/common/OVERVIEW.md) |
+| Shell setup and editor/target selection | [Interactive setup](cli/README.md#interactive-setup), `cli/setup.py`, and `cli/shell/` |
 | Deployment, API training, or schema refresh | [Flow reference](cli/README.md), then `cli/flow.py`, `cli/operations.py`, or `cli/schema_refresh.py` |
 | Local checks or CI | `Makefile`, `pyproject.toml`, `conftest.py`, and `.github/workflows/ci.yml` |
 

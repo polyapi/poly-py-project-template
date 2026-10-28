@@ -1630,6 +1630,9 @@ def create_parser() -> argparse.ArgumentParser:
         formatter_class=HelpFormatter,
     )
     subparsers = parser.add_subparsers(dest="command", metavar="command")
+    subparsers.add_parser(
+        "setup", help="Configure the SDK, project target, and editor."
+    )
     push_parser = subparsers.add_parser(
         "push",
         help="Sync local artefacts to PolyAPI.",
@@ -10144,6 +10147,10 @@ def sync_subscriptions(
 
 
 def main() -> int:
+    if sys.argv[1:2] == ["setup"]:
+        from cli.setup import main as setup_main
+
+        return setup_main(sys.argv[2:])
     cli_args = parse_args()
     if cli_args is None:
         return 0

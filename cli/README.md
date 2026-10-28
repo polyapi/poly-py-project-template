@@ -43,6 +43,57 @@ regenerate the SDK even when remote functions are unchanged, unless `--skip-gene
 is supplied or generation is disabled in configuration. Dry runs do not generate.
 A failed generation is retried by the next push, including `--resume`.
 
+## Interactive setup
+
+Load the [Bash, Fish, or PowerShell helper](../README.md#guided-setup-with-flow)
+once, then run `flow setup`. The shell function activates the project's `.venv`
+and forwards commands to `uv run --locked python cli/flow.py`, with the selected
+`ENVPATH`. It finds the nearest Python Flow project from the current directory;
+it does not bind future commands to the checkout where the profile was installed.
+
+Setup uses the pinned Python SDK's native interactive setup and generation.
+It removes inherited `POLY_API_KEY` and `POLY_API_BASE_URL` only in its child
+process so the SDK does not bypass its prompts or reuse exported credentials.
+The SDK's saved values remain the defaults. Credentials are never placed in
+shell aliases, arguments, editor settings, or the non-secret selection state.
+
+`GET /whoami` must return an authenticated environment ID and tenant/environment
+names before project configuration is written. Redirects and failed identity
+requests stop setup. A production name suggests prod; unclear or mixed names
+suggest dev. Both file choices remain available, and the selected tenant and
+environment are shown at confirmation. Previous selection wins only for the
+same base URL and environment ID.
+
+Setup updates only `POLY_API_BASE_URL`, `POLY_API_KEY`, and `TARGET_ENV_ID` in the
+selected env file. A new target gets an empty `POLY_EXEC_API_KEY` to prevent an
+inherited execution key being used; an existing file's target change requires
+explicit confirmation and clears that key too. Other workflow configuration is
+preserved. Existing env files must be untracked and Git-ignored. Setup does not
+rename contexts, train APIs, deploy resources, or weaken branch/OTP safeguards.
+Native SDK configuration/generation occurs first and is not rolled back when a
+later prompt is cancelled.
+
+Editor settings live in ignored `.vscode/settings.json`; selection metadata
+lives in ignored `.flow/setup.json`. Bash uses `.bash_profile` on macOS and
+`.bashrc` elsewhere, Fish uses its `conf.d/poly_flow.fish`, and PowerShell uses
+`$PROFILE.CurrentUserAllHosts`. Profile registration is optional, shown before
+writing, and not duplicated on later runs. An existing command named `flow` is
+preserved; inspect or remove it yourself before loading this implementation.
+Remove the marked loader entry to uninstall it from future terminals.
+
+For use without shell integration:
+
+```bash
+uv run --locked python cli/flow.py setup
+```
+
+That command configures the SDK, env file, and editor but cannot activate the
+calling shell or define a shell function. The implementation is kept in
+`cli/setup.py` plus three thin `cli/shell/flow.*` loaders. Reusing it in another
+project currently requires the same Flow entrypoint, locked uv project,
+`.venv`, env example, and ignore rules; it is not a globally installed package
+or GitHub app. It adds no runtime dependency.
+
 ## Dependency-aware deployments
 
 Use `push-dynamic` when updating shared client functions. It uses Python's AST

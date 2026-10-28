@@ -9,6 +9,37 @@ jobs, AI functions, Canopy applications, and GraphQL subscriptions. Its
 `push-dynamic` command rebuilds consuming server functions when a shared client
 changes, including dependencies through other client functions.
 
+## Quick start
+
+Install [uv](https://docs.astral.sh/uv/), then open a terminal in your cloned
+repository's root. Load the helper for your shell once:
+
+| Shell | Load the `flow` command |
+| --- | --- |
+| Bash | `source cli/shell/flow.bash` |
+| Fish | `source cli/shell/flow.fish` |
+| PowerShell | `. ./cli/shell/flow.ps1` |
+
+Then run:
+
+```bash
+flow setup
+```
+
+This creates and activates `.venv`, runs the Python SDK setup, verifies your
+tenant and environment, and asks you to confirm **dev or prod**. It configures
+the selected env file and VS Code, and offers to save `flow` for future terminals.
+
+Next, follow the [sample workflow setup](workflows/src/sample_workflow/OVERVIEW.md#training-and-configuration)
+to train its APIs and configure its secrets, then preview deployment:
+
+```bash
+flow push-dynamic --paths sample_workflow --dry-run
+```
+
+See [guided setup details](#guided-setup-with-flow) for target changes, existing
+commands, and configuration safeguards. Setup itself does not deploy resources.
+
 ## Structure
 
 ```text
@@ -42,9 +73,10 @@ dependencies.
 The optional VS Code Code Spell Checker extension uses [cspell.json](cspell.json)
 for shared Python and PolyAPI vocabulary. Personal editor settings stay local.
 
-## Local setup
+## Local development checks
 
-Install [uv](https://docs.astral.sh/uv/), then run these Bash commands:
+To install locked dependencies and run checks without configuring a PolyAPI
+target, use these Bash commands:
 
 ```bash
 uv python install 3.12.12
@@ -71,6 +103,50 @@ to refresh platform JSON validators from that instance, or add `--build-schema`
 to a Flow push. See the [CLI guide](cli/README.md#schema-refresh) for schema-source
 overrides, AI enrichment, and validation flags.
 
+## Guided setup with `flow`
+
+Start with the [quick start](#quick-start). The helper activates the project
+venv even when another venv was active.
+
+Setup runs the native `python -m polyapi setup` prompts and SDK generation,
+then verifies the configured key with `GET /whoami`. It shows the tenant and
+environment names, suggests `dev` or `prod`, and asks you to confirm the file:
+`workflows/dev.env` or `workflows/prod.env`. Unclear names default to dev. This
+file choice does not change the actual environment or bypass production guards.
+
+If the file is missing, setup offers to copy `workflows/dev.env.example`. It
+saves the SDK URL/key and verified `TARGET_ENV_ID`, preserving other settings.
+Changing an existing file's target requires a separate confirmation and clears
+its execution key; add the correct `POLY_EXEC_API_KEY` before deploying server
+functions. The namespace is preserved; follow the customization instructions
+below when replacing the template's sample namespace.
+
+VS Code gets the `.venv` interpreter, selected Python env file, and `ENVPATH`
+for new integrated terminals. Other settings and unrelated JSONC comments are
+preserved. If an interpreter was already selected, use **Python: Select
+Interpreter** to choose `.venv`; reopen terminals to refresh their environment.
+
+Setup offers to add the loader to your shell profile, showing the path and
+command and requiring confirmation. Declining keeps `flow` in this terminal;
+source the helper again in another terminal. Existing `flow` commands are never
+overwritten. The helper is a shell function because an executable cannot
+activate its parent shell. PowerShell uses your existing execution policy.
+
+Once loaded, `flow` works from anywhere inside the project.
+
+Rerun `flow setup` to change targets. Enter retains the SDK's previous URL/key
+and the previous file selection when the authenticated target is unchanged.
+Each project remembers its selection in ignored `.flow/setup.json`; no key is
+stored in that file or your shell profile. Switching projects resolves that
+project's own venv and selection. The profile's loader source must remain at
+its installed path; source the new copy if you move or delete that checkout.
+
+The SDK saves its own configuration and generates bindings before the target
+confirmation. Cancelling afterward leaves project settings unchanged but does
+not roll back that native SDK configuration/generation. Setup performs no
+resource deployment. See the [setup reference](cli/README.md#interactive-setup)
+for its configuration boundaries and reuse requirements.
+
 ### Enable the pre-commit hook
 
 Run this once from the repository root in each clone:
@@ -90,7 +166,9 @@ To run the hook without creating a commit:
 git hook run pre-commit
 ```
 
-## Configure a deployment target
+## Configure a deployment target manually
+
+Use this alternative when not using `flow setup`.
 
 Create a Git repository from the template with an initial commit on `main`.
 Flow uses Git branch history to select production safeguards.
