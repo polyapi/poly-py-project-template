@@ -1,96 +1,254 @@
 # Weather AI function
 
-`example.sample_ai_fx.uplifting_weather` accepts a city or town in `location`
-and optional `activity`. It calls `searchLocations` for coordinates, then
-`getCurrentWeather` for current conditions, and returns practical guidance.
-Both tools use [Open-Meteo](https://open-meteo.com/), with no weather account,
-API key, or trial needed for evaluation.
+Ask for current weather and practical advice for an activity. This lesson shows
+how an AI Function combines **tool-provided facts**, **fixed configuration**, and
+**generated guidance** in a structured result.
 
-The public API supports evaluation and non-commercial use. Review
-[Open-Meteo's terms and commercial plans](https://open-meteo.com/en/pricing)
-before production use. The target still needs the AI provider/model selected in
-[the AI artefact](artefacts/ai-functions/uplifting_weather.json); AI execution can
-incur provider charges. Configure the tenant provider before running the AI test.
+Complete [Getting started](../../../README.md#getting-started) first. If you are
+new to API training and the generated SDK, start with
+[Message of the day](../sample_workflow/OVERVIEW.md). Run commands from the project
+root in Bash.
 
-## Configure the AI provider
+Coding-agent skills are optional for this lesson. Kickstart installs them;
+manual checkouts already include the core Python skills. See the
+[skills guide](../../../docs/SETUP.md#agent-skills) for the broader collection.
 
-The sample uses OpenAI through the PolyAPI tenant configuration:
+## What you will learn
 
-1. Have a tenant administrator store the OpenAI API key as a **SECRET string
-   Vari** in the selected tenant. Keep shared provider configuration outside
-   this sample's disposable namespace.
-2. Set the tenant's `OpenAITenantApiKey` configuration to that Vari's UUID.
-   The value is the variable ID, not the provider key. The administrative API
-   is `PATCH /tenants/{tenantId}/config-variables/OpenAITenantApiKey` with JSON
-   body `{"value":"<SECRET_VARI_UUID>"}`. It requires a user-bound PolyAPI key
-   with `ManageTenant` permission and a current `x-otp` MFA code.
-3. Confirm the OpenAI project has API credits and access to the configured model.
+The function accepts a required `location` and optional `activity`. It searches
+for coordinates, asks a weather API for current conditions, then generates
+activity-aware guidance. The tools use Open-Meteo and need no weather account or
+API key for evaluation. The AI Function still requires configured OpenAI access
+and can incur provider charges.
 
-Keep the provider key in Vari; it does not belong in the local environment file
-or AI artefact. The weather tools themselves need no credentials.
+| Part of the lesson | Purpose | Source |
+| --- | --- | --- |
+| Location tool | Convert a place name into candidate coordinates | [Geocoding spec](artefacts/specs/geocoding_api.json) |
+| Weather tool | Fetch current conditions at the selected coordinates | [Weather spec](artefacts/specs/weather_api.json) |
+| AI Function | Define inputs, prompt, allowed tools, fixed arguments, and result shape | [uplifting_weather](artefacts/ai-functions/uplifting_weather.json) |
+| Contract tests | Check the local bindings and output schema | [Local tests](tests/test_weather_contract.py) |
+| Runtime test | Invoke one deployed example and check its result | [Integration test](tests/test_weather_integration.py) |
 
-A missing tenant configuration returns `403`. A provider failure can appear to
-the caller as a generic `500`; inspect the AI execution logs and correlate their
-execution ID and timestamp with gateway logs. An upstream `401` indicates an
-invalid key, while a `429` stating no credits remain requires billing attention.
-Do not retry that quota failure until the provider account is funded or the
-administrator replaces the Vari value with a funded project's key. Do not copy
-provider key fragments from logs into reports.
+## Run the lesson
 
-## Train the weather tools
+### 1. Confirm the prerequisites
 
-Configure the target and replace `example` with your namespace as described in
-the root README. From the repository root:
+Use the target configured during setup and ask its administrator to confirm
+OpenAI provider access and the model named in the AI artefact (`gpt-5.5`). If it
+is not configured, use [provider setup](#provider-setup-reference) below before
+invoking the function.
 
-```bash
-ENVPATH=workflows/dev.env uv run --locked python -m cli.operations train-openapi workflows/src/sample_ai_fx/artefacts/specs --context example.sample_ai_fx --dry-run --disable-ai
-ENVPATH=workflows/dev.env uv run --locked python -m cli.operations train-openapi workflows/src/sample_ai_fx/artefacts/specs --context example.sample_ai_fx --disable-ai
-```
+The context root must match `POLYAPI_NAMESPACE`. Kickstart updates the sample,
+utilities, and copied tutorial examples to your chosen root. This copy uses
+`example`. For a fresh manual checkout, run the local namespace-alignment step in
+[manual setup](../../../docs/SETUP.md#configure-a-deployment-target-manually)
+to update the starter code, artefacts, and examples together. Changing the
+environment variable alone is insufficient. For already-customized or deployed
+projects, follow [ownership and references](../../../docs/CONVENTIONS.md#ownership-and-references).
 
-The bundled [geocoding spec](artefacts/specs/geocoding_api.json) and
-[weather spec](artefacts/specs/weather_api.json) define the exact tool names and
-arguments used by the AI artefact. PolyAPI translates the provider query name
-`temperature_unit` to the generated argument `temperatureUnit`; the binding uses
-that generated name. `--disable-ai` skips optional training-time
-metadata enrichment to preserve those contracts; it does not disable the AI
-sample. Training saves `.poly.json` models next to the specs and regenerates the
-Python SDK. To retrain a saved model, use `train-model` as documented in the
-[Flow reference](../../../cli/README.md#openapi-training-cleanup-and-logs).
-
-## Deploy and invoke
-
-The tools and AI function live in the same project namespace. The AI supplies
-only the location search text and returned coordinates; fixed argument bindings
-select public hosts, Celsius, and the required weather fields. No weather Vari
-or provider secret is required.
+Select your setup-configured file once per terminal session:
 
 ```bash
-ENVPATH=workflows/dev.env uv run --locked python cli/flow.py push --paths sample_ai_fx --types ai-functions --dry-run
-ENVPATH=workflows/dev.env uv run --locked python cli/flow.py push --paths sample_ai_fx --types ai-functions
+export ENVPATH=workflows/dev.env
 ```
 
-The structured result contains `location`, `currentWeather`, `description`,
-`recommendedItems`, `upliftingMessage`, and `attribution`. Display the attribution
-with the result: weather data comes from Open-Meteo under CC BY 4.0 and location
-data from GeoNames. Recommendations are AI-generated. Current conditions are
-model-based estimates, not station observations or official alerts.
+Python Flow resolves relative paths from the project root. Use the full
+`workflows/dev.env` path, or the selected file if different. Direct SDK calls
+below load that same file explicitly with `uv --env-file "$ENVPATH"`.
 
-If the tools find no location or usable weather, the prompt requests
-`currentWeather: null`, an explanation, and no recommended items. Execution or
-provider errors can still propagate to the caller; callers should handle them.
-
-## Verify
-
-Local tests validate the tool/spec bindings and output contract without network
-calls or provider credentials:
+Run the local contract checks:
 
 ```bash
 uv run --locked pytest workflows/src/sample_ai_fx/tests/test_weather_contract.py
 ```
 
-The deployed test calls the generated Python SDK. It needs both explicit opt-ins
-because the AI call can incur provider usage:
+**Checkpoint:** these tests pass without credentials. They verify the checked-in
+contracts, not the remote translator, model behavior, or weather accuracy.
+
+### 2. Train the weather tools
+
+Preview the bundled specifications, then train them:
 
 ```bash
-RUN_POLY_INTEGRATION=true RUN_AI_INTEGRATION=true uv run --locked --env-file workflows/dev.env pytest workflows/src/sample_ai_fx/tests/test_weather_integration.py
+uv run --locked python -m cli.operations train-openapi workflows/src/sample_ai_fx/artefacts/specs --context example.sample_ai_fx --dry-run --disable-ai
+uv run --locked python -m cli.operations train-openapi workflows/src/sample_ai_fx/artefacts/specs --context example.sample_ai_fx --disable-ai
 ```
+
+The preview checks local inputs only. Real training verifies the target, saves
+`.poly.json` models beside the specs, registers the tools, and regenerates the
+Python SDK. `--disable-ai` skips optional metadata enrichment; it does not disable
+the AI Function you will invoke later.
+
+**Checkpoint:** inspect the translated models for `searchLocations` and
+`getCurrentWeather` in your namespace. Match their argument keys to the AI
+artefact. In particular, the weather binding expects `temperatureUnit`, translated
+from the provider's `temperature_unit`. The offline preview cannot prove that
+translation. To retry saved models or deliberately regenerate them, follow
+[Flow training](../../../cli/README.md#openapi-training-cleanup-and-logs).
+
+### 3. Deploy the AI Function
+
+```bash
+uv run --locked python cli/flow.py push --paths sample_ai_fx --types ai-functions --dry-run
+uv run --locked python cli/flow.py push --paths sample_ai_fx --types ai-functions
+```
+
+Review the target and plan before the real push. Flow verifies the environment
+and normally regenerates the SDK afterward. This push deploys the AI contract;
+training in step 2 creates its two outbound tools.
+
+**Checkpoint:** Canopy and the generated SDK contain
+`example.sample_ai_fx.uplifting_weather` under your chosen root, with `location`
+and optional `activity` arguments. The function is enabled, its two tools resolve,
+and the tenant's model provider is ready.
+
+### 4. Ask for weather guidance
+
+The following direct SDK call uses its saved connection or canonical
+`POLY_API_BASE_URL` / `POLY_API_KEY` overrides from your selected file. It does
+not apply Flow's aliases or `TARGET_ENV_ID` check. Confirm that the generated
+bindings and connection are for the intended environment. Substitute your
+namespace in the Python call if different from `example`.
+
+```bash
+uv run --locked --env-file "$ENVPATH" python - <<'PY'
+import asyncio
+import json
+from polyapi import poly
+
+async def main():
+    result = await poly.example.sample_ai_fx.uplifting_weather_async(
+        "London, United Kingdom", "an outdoor walk"
+    )
+    print(json.dumps(result, indent=2))
+
+asyncio.run(main())
+PY
+```
+
+An illustrative response follows. The numbers and prose are examples, not a live
+weather report:
+
+```json
+{
+  "location": "London, United Kingdom",
+  "currentWeather": {
+    "condition": "Partly cloudy",
+    "temperature": 14,
+    "unit": "C"
+  },
+  "description": "A light layer may help during your walk.",
+  "recommendedItems": ["Light jacket", "Comfortable shoes"],
+  "upliftingMessage": "Enjoy a change of scenery on your walk!",
+  "attribution": "Weather data: Open-Meteo (https://open-meteo.com/), CC BY 4.0. Location data: GeoNames (https://www.geonames.org/). Guidance is AI-generated."
+}
+```
+
+**Checkpoint:** the result follows the declared schema and includes attribution.
+The location and weather fields should be grounded in tool data; the description,
+items, and uplifting message are AI-generated interpretations. A valid schema
+alone does not prove factual accuracy.
+
+## How the AI contract works
+
+```mermaid
+flowchart TD
+    R[SDK caller supplies location and activity] --> A[AI Function reads prompt]
+    A --> G[Search location tool]
+    G --> L{Matching location available}
+    L -->|no| N[Null weather and explanation]
+    L -->|yes| W[Weather tool with exact coordinates]
+    W --> C{Usable weather available}
+    C -->|no| N
+    C -->|yes| F[Interpret facts and generate guidance]
+    F --> O[Structured result with attribution]
+    N --> O
+    G -->|execution failure| E[Error to caller]
+    W -->|execution failure| E
+    A -->|provider failure| E
+```
+
+In [the AI artefact](artefacts/ai-functions/uplifting_weather.json):
+
+- `arguments` declares what callers supply. `inputTemplate` combines those inputs
+  into a request; `systemPrompt` defines the behavior and failure instructions.
+- `toolFunctions` limits the available tools. The AI selects search text and
+  coordinates; fixed bindings select provider hosts, Celsius, and weather fields.
+- `outputSchema` requires `location`, `currentWeather`, `description`,
+  `recommendedItems`, `upliftingMessage`, and `attribution`, with no extra keys.
+- If no location or usable weather is found, the prompt requests null weather,
+  an explanation, and no recommended items. Execution errors can still propagate
+  instead of producing that result; callers should handle them.
+
+There is no webhook, server wrapper, scheduled job, or Tabi state in this sample.
+The two trained tools and AI Function live in the project namespace; shared
+provider configuration belongs outside its disposable resources.
+
+Display attribution with the result. Open-Meteo weather is model-based current
+estimates, not station observations, forecasts for a requested future date, or
+official alerts. Its public API supports evaluation and non-commercial use;
+review [the provider's terms and commercial plans](https://open-meteo.com/en/pricing)
+before production use.
+
+## Try it yourself
+
+- Keep the location fixed and change the activity to cycling. Expect the same
+  output structure and activity-specific guidance; current measurements can
+  change between calls.
+- Omit the second argument. The optional activity should not be necessary for a
+  useful response. Confirm this behavior in your environment.
+- Use an ambiguous place name, then add its country. Inspect how the resolved
+  location changes and why the selected coordinates matter.
+- Trace `temperatureUnit` from the weather spec through the translated model to
+  its fixed binding. Changing that binding also requires aligning the prompt,
+  output schema, and tests; a schema is part of the contract.
+- Inspect the no-match instructions. A live exercise should check for null weather
+  and empty items rather than assume the model obeyed the prompt.
+
+## Verification and troubleshooting
+
+After the manual call, the opt-in deployed test checks one London/outdoor-walk
+response:
+
+```bash
+RUN_POLY_INTEGRATION=true RUN_AI_INTEGRATION=true uv run --locked --env-file "$ENVPATH" pytest workflows/src/sample_ai_fx/tests/test_weather_integration.py
+```
+
+Both flags are required because the call incurs provider usage. The test validates
+the schema, nonempty text, non-null weather, Celsius, and attribution. It does not
+check factual agreement with upstream measurements, no-match behavior, or tool
+failures. Like the direct SDK example, it does not enforce Flow's target pin.
+
+| Symptom | Check |
+| --- | --- |
+| Tool or SDK name missing | Confirm the namespace, translated names, training, and SDK generation for the same target. |
+| Tool arguments rejected | Compare the translated model with each `argumentConfig` key, especially `temperatureUnit`. |
+| Weather is null | Check the resolved location and tool results before treating it as a model problem. |
+| Permission or provider error | Ask the administrator to check AI execution access and tenant provider configuration. |
+| Generic server error | Correlate the AI execution ID and timestamp with gateway logs; a status alone does not establish the cause. |
+| Provider authentication or quota error | Distinguish authentication, rate limiting, and exhausted quota before retrying. |
+
+## Provider setup reference
+
+The sample uses OpenAI through PolyAPI's tenant configuration. Provider setup and
+permission to execute the AI Function are prerequisites; see the
+[platform AI guide](https://docs.polyapi.io/ai_functions/index.html).
+
+1. Have a tenant administrator store the OpenAI API key as a **SECRET string Vari**
+   in the selected tenant, outside this sample's disposable namespace.
+2. Set `OpenAITenantApiKey` to that Vari's UUID, not the provider key. Confirm the
+   configuration name and update contract in the selected instance's Swagger
+   before using `PATCH /tenants/{tenantId}/config-variables/OpenAITenantApiKey`
+   with `{"value":"<SECRET_VARI_UUID>"}`. This procedure is outside Flow and the
+   sample's tests; confirm its `ManageTenant`, user-key, and `x-otp` requirements.
+3. Confirm the OpenAI project has credits and access to the configured model.
+
+Keep the provider key in Vari, outside local env files and the AI artefact. The
+Open-Meteo tools need no weather-provider secret.
+
+For `403`, check execution permissions and tenant provider setup. For an upstream
+`401`, check provider authentication. Distinguish a rate-limit `429` from a
+quota/billing `429`; the latter needs account attention. See
+[OpenAI's error guide](https://developers.openai.com/api/docs/guides/error-codes).
+Exact gateway mappings depend on the target and are not verified by local tests.
+Do not copy provider key fragments from logs into reports.

@@ -4,8 +4,9 @@ Python Flow validates and synchronizes PolyAPI resources from local Python
 functions and JSON artefacts. It also provides OpenAPI training with AI metadata
 enrichment, scoped resource cleanup, function logs, and schema refresh.
 
-See the [project README](../README.md) for Python 3.12.12 setup, dependencies,
-environment configuration, and the sample workflow.
+See [setup and development](../docs/SETUP.md) for Python 3.12.12 setup,
+dependencies, and environment configuration. The
+[template homepage](../README.md#learn-by-example) links to the sample workflows.
 
 Run from the repository root:
 
@@ -45,13 +46,13 @@ A failed generation is retried by the next push, including `--resume`.
 
 ## Interactive setup
 
-For a new project, the root README's [kickstart command](../README.md#quick-start)
+For a new project, the root README's [kickstart command](../README.md#getting-started)
 handles cloning, dependencies, skills, namespaces, SDK generation, and editor
 configuration. It reuses the same identity verification, environment pin, and
 target/editor save path described here. The following manual setup remains
 available for existing checkouts and target changes.
 
-Load the [Bash, Fish, or PowerShell helper](../README.md#guided-setup-with-flow)
+Load the [Bash, Fish, or PowerShell helper](../docs/SETUP.md#existing-checkout-or-manual-setup)
 once, then run `flow setup`. The shell function activates the project's `.venv`
 and forwards commands to `uv run --locked python cli/flow.py`, with the selected
 `ENVPATH`. It finds the nearest Python Flow project from the current directory;
@@ -573,7 +574,6 @@ Recursive schema training is enabled by default. The pinned Python SDK can skip
 recursive schema types during SDK generation; inspect its warnings when a
 contract contains recursion. Platform training and SDK type generation are
 separate checks.
-
 
 ## Schema refresh
 

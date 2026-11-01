@@ -5,7 +5,7 @@ and Flow tooling under `cli/`.
 
 ## Source of truth
 
-Read this file, the [root README](README.md), and [CONVENTIONS.md](CONVENTIONS.md),
+Read this file, the [root README](README.md), and [CONVENTIONS.md](docs/CONVENTIONS.md),
 then the relevant workflow's `OVERVIEW.md`. Verify documentation against
 checked-in code, artefacts, and tests before relying on it. Load the relevant
 local skill below for the behavior being implemented or reviewed.
@@ -18,7 +18,7 @@ local skill below for the behavior being implemented or reviewed.
 | AI tools and structured weather output | [Weather AI](workflows/src/sample_ai_fx/OVERVIEW.md) |
 | Logging or error notifications | [Common utilities](workflows/src/utilities/common/OVERVIEW.md) |
 | Shell setup and editor/target selection | [Interactive setup](cli/README.md#interactive-setup), `cli/setup.py`, and `cli/shell/` |
-| New-project bootstrapping | [Quick start](README.md#quick-start), `kickstart/kickstart.sh`, `kickstart/kickstart.py`, and `kickstart/configure.py` |
+| New-project bootstrapping | [Getting started](README.md#getting-started), `kickstart/kickstart.sh`, `kickstart/kickstart.py`, and `kickstart/configure.py` |
 | Deployment, API training, or schema refresh | [Flow reference](cli/README.md), then `cli/flow.py`, `cli/operations.py`, or `cli/schema_refresh.py` |
 | Local checks or CI | `Makefile`, `pyproject.toml`, `conftest.py`, and `.github/workflows/ci.yml` |
 
@@ -97,5 +97,5 @@ maintained in `poly-skills`. Keep those package names and copy their supporting
 references when refreshing reviewed updates.
 
 Keep this template's paths, SDK pin, commands, and deployment safeguards in this
-file and [CONVENTIONS.md](CONVENTIONS.md). Check shared guidance against the
+file and [CONVENTIONS.md](docs/CONVENTIONS.md). Check shared guidance against the
 current implementation before applying an update.
