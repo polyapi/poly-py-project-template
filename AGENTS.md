@@ -28,6 +28,11 @@ artefacts; keep operator scripts outside `workflows/src/`.
 
 ## Implementation
 
+- Flow's version lives in `cli/__init__.py`, independently of the workspace
+  version and SDK dependency. Starting with 1.1.0, use patch releases for fixes,
+  minor releases for compatible features, and major releases for breaking
+  changes. Group related unreleased changes in one release, rather than
+  bumping for every edit. Version commands must read that single source.
 - Use Python 3.12.12, uv, Black, Flake8, and pytest.
 - Keep function code, `polyConfig`, JSON artefacts, and tests aligned.
 - Use the native `polyapi-python` SDK and generated calls for deployed dependencies.

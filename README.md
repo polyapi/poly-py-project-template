@@ -46,6 +46,8 @@ setup instructions before deploying or invoking it.
 
 To build your own integration, start from the closest sample and follow the
 [workflow layout and naming rules](docs/CONVENTIONS.md#workflow-layout).
+Keep the examples for reference while [excluding sample deployments](docs/SETUP.md#skip-sample-deployments)
+with `POLY_DEPLOY_SKIP_PATHS` when you no longer want them in normal pushes.
 
 ## Everyday commands
 
@@ -53,6 +55,7 @@ Run from the project root after setup:
 
 ```bash
 export ENVPATH=workflows/dev.env
+uv run --locked python cli/flow.py --version
 make check
 uv run --locked pytest workflows/src/sample_workflow/tests/test_motd.py
 uv run --locked python cli/flow.py \
@@ -60,7 +63,8 @@ uv run --locked python cli/flow.py \
 ```
 
 Export your setup-selected path once per terminal session; Python Flow resolves
-it from the project root. Keep your owned namespace and verified `TARGET_ENV_ID` in the selected environment
+it from the project root. Keep your owned namespace and verified
+[`TARGET_ENV_ID` pin](docs/SETUP.md#pin-the-target-environment) in the selected environment
 file. Review the target and expanded deployment plan before a real push. Keep
 real environment files and secrets out of Git.
 

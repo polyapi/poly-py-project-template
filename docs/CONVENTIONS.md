@@ -158,12 +158,14 @@ to the unresolved source; it never persists substituted environment values.
 
 Scoped pushes skip orphan detection. Full pushes report namespace-owned
 orphans; deletion requires `--delete-orphans`. Skipping a local directory
-does not make its resources orphans.
+does not make its resources orphans. Use [`POLY_DEPLOY_SKIP_PATHS`](SETUP.md#skip-sample-deployments)
+to exclude learning samples from normal deployments while keeping their source.
 
 ## Target selection and generated SDK
 
 Keep `POLYAPI_NAMESPACE` and the verified `TARGET_ENV_ID` in the selected local
-Flow environment file. Flow remote commands verify that pin against `/whoami`,
+Flow environment file; see [target pinning](SETUP.md#pin-the-target-environment)
+for setup and mismatch handling. Flow remote commands verify that pin against `/whoami`,
 including deployment dry runs. Shell exports and confirmation bypasses do not
 replace the file's pin. An offline training preview checks input only and does
 not prove target identity or translated SDK names.

@@ -4,6 +4,20 @@ Python Flow validates and synchronizes PolyAPI resources from local Python
 functions and JSON artefacts. It also provides OpenAPI training with AI metadata
 enrichment, scoped resource cleanup, function logs, and schema refresh.
 
+Check the installed Flow version with `flow --version` (or `flow -V`) when
+using the configured shell helper. From the project root, you can also run:
+
+```bash
+uv run --locked python cli/flow.py --version
+```
+
+Before dependency setup, `python3 cli/flow.py --version` works with just Python.
+Flow starts at **1.1.0**, matching the TypeScript Flow baseline. Its version is
+maintained in `cli/__init__.py`, independently of the workspace and PolyAPI SDK.
+Patch releases contain fixes, minor releases add compatible features, and
+major releases introduce breaking changes. Matching language versions do not
+imply identical features; each CLI's version advances with its own releases.
+
 See [setup and development](../docs/SETUP.md) for Python 3.12.12 setup,
 dependencies, and environment configuration. The
 [template homepage](../README.md#learn-by-example) links to the sample workflows.
@@ -315,13 +329,40 @@ spec source or URL override is provided.
 
 Keep separate environment files for separate targets and select one with
 `ENVPATH`. Each must retain its own verified `TARGET_ENV_ID`, regardless of
-where the connection comes from.
+where the connection comes from. This is the environment's ID, not a namespace,
+tenant ID, or display name. Kickstart and `flow setup` verify and save it; for
+manual configuration, use [target pinning](../docs/SETUP.md#pin-the-target-environment).
 
 Flow loads `ENVPATH`, or root `.env` when omitted. The selected file must
 declare `TARGET_ENV_ID`; `GET /whoami` must report that exact environment
-before synchronization proceeds. `POLYAPI_NAMESPACE` limits local contexts
+before synchronization proceeds, including deployment dry runs. The pin must
+come from the file, not only a shell export, and changing it does not change
+the configured connection. Training, cleanup previews, and logs also verify it;
+offline training previews and offline dependency reports do not. Direct SDK
+calls and workflow runtime tests do not enforce this Flow guard.
+
+`POLYAPI_NAMESPACE` limits local contexts
 and orphan ownership. `POLYAPI_NAMESPACES` may provide a comma-separated list
 of explicitly owned roots instead.
+
+`POLY_DEPLOY_SKIP_PATHS` excludes a comma-separated list of files or directories
+from `push` and `push-dynamic` deployment scans. Paths are relative to the
+repository root, and directory entries include their descendants; glob patterns
+are not supported. For example:
+
+```env
+POLY_DEPLOY_SKIP_PATHS=workflows/src/sample_workflow,workflows/src/sample_ai_fx
+```
+
+Merge these with existing exclusions. Online deployment previews load the same
+file settings, and `--paths` cannot override exclusions. Offline graph reports
+do not load `ENVPATH` and do not verify the selected file's exclusions.
+An excluded consumer needed by `push-dynamic`
+blocks the plan rather than being deployed despite the exclusion. Skipped local
+files still count during orphan detection, so this setting does not delete
+existing samples. It does not limit explicit training or context-based cleanup
+commands. See [skipping samples](../docs/SETUP.md#skip-sample-deployments) for
+enabling a sample again while following its tutorial.
 
 `GIT_PROD_BRANCH` defaults to `main`, and `GIT_PROD_SKIP_BRANCHES` to `develop`.
 Bindings use `branch:path/to/file.env`; a bare filename resolves under `env/`.

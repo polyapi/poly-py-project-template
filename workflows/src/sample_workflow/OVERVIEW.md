@@ -63,8 +63,10 @@ is separate from the [Weather AI lesson](../sample_ai_fx/OVERVIEW.md).
 ### 1. Confirm setup and namespace
 
 Use a development environment with permission to manage the sample resources,
-generate the SDK, and execute functions. Setup saves the verified `TARGET_ENV_ID`
-in the selected Flow environment file.
+generate the SDK, and execute functions. `TARGET_ENV_ID` pins the selected Flow
+environment file to the intended PolyAPI environment; it is separate from the
+namespace below. Kickstart and `flow setup` save this verified ID. For manual
+setup or a mismatch, follow [target pinning](../../../docs/SETUP.md#pin-the-target-environment).
 
 This tutorial assumes you are using `example` as your namespace in
 `workflows/dev.env`. **Check this setting in the file**, rather than entering it
@@ -157,6 +159,12 @@ same environment before continuing. An offline preview alone cannot generate
 these definitions. See the same reference if models already exist when you retry.
 
 ### 3. Preview and deploy the workflow
+
+If your selected environment file sets `POLY_DEPLOY_SKIP_PATHS`, remove
+`workflows/src/sample_workflow` from that list before this lesson's deployment.
+An excluded parent folder also prevents deployment, and `--paths` does not
+override exclusions. See [skipping samples](../../../docs/SETUP.md#skip-sample-deployments)
+for how to exclude them again after learning.
 
 Use a branch based on `develop`; see [development branches](#development-branches)
 if your checkout is not already configured. **In your terminal**, preview this

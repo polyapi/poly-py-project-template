@@ -55,6 +55,64 @@ Flow reads the selected file itself. Direct SDK commands and runtime tests need
 apply Flow's target-pin check. Exporting `ENVPATH` does not load the file's
 contents into your shell.
 
+## Pin the target environment
+
+`TARGET_ENV_ID` is the ID of the PolyAPI environment this file is allowed to
+manage. It is separate from the namespace, tenant ID, and environment name.
+Keep it in the selected file, for example `workflows/dev.env`:
+
+```env
+TARGET_ENV_ID=replace-with-environment-id
+```
+
+Kickstart and `flow setup` verify the configured connection with `GET /whoami`
+and save its environment ID after confirmation. For manual setup, use the
+intended environment's ID shown in Canopy or the `environmentId` returned by
+authenticated `GET /whoami`. If unsure, use [guided setup](#guided-setup-with-flow)
+to verify and save it.
+
+Flow compares the file's pin with the authenticated environment before online
+pushes (including deployment dry runs), API training, cleanup previews, and logs.
+A mismatch stops the operation even when both environments share a base URL.
+Changing the pin does not change the saved SDK connection or API key; configure
+the intended connection as well. Exporting `TARGET_ENV_ID` only in the shell
+does not supply the required file pin. If Flow reports a mismatch, first confirm
+which environment you intend to use and correct the selected file or connection.
+Change the pin only when you deliberately retarget that file.
+
+Offline training previews and offline dependency reports do not perform this
+live check. Direct SDK calls and runtime tests also do not enforce Flow's pin;
+confirm their connection separately.
+
+## Skip sample deployments
+
+To keep the learning samples in your repository without deploying them during
+normal project pushes, add this setting to the selected Flow environment file:
+
+```env
+POLY_DEPLOY_SKIP_PATHS=workflows/src/sample_workflow,workflows/src/sample_ai_fx
+```
+
+This is a comma-separated list of file or directory paths relative to the
+**project root**. A directory excludes everything below it; these are paths,
+not glob patterns. Add the sample paths to any existing list instead of replacing
+other exclusions. The setting above leaves shared utilities available to deploy.
+
+Normal `push` and `push-dynamic` runs load these exclusions from the selected
+file, including their online deployment previews. Offline graph reports do not
+load that file and do not verify its exclusions.
+`--paths sample_workflow` does not override exclusions. To follow a sample tutorial,
+remove that sample's entry first and make sure no parent folder is excluded.
+You can restore the entry afterward when you want normal pushes to skip it.
+For dependency rebuilds, an excluded consumer can block the plan; review the
+[dynamic deployment rules](../cli/README.md#dependency-aware-deployments).
+
+Skipping a folder does not delete already-deployed samples. Orphan detection
+still recognizes their local files. This setting controls deployment scanning;
+it does not prevent explicitly requested API training, context-based cleanup,
+or calls to an already-deployed sample. The target pin remains required for
+online deployment and maintenance operations even when samples are excluded.
+
 ## Workspace reference
 
 ```text
@@ -213,7 +271,8 @@ Edit the copy with your target's values:
 | `POLY_API_BASE_URL` | Optional override of the instance URL saved by SDK setup |
 | `POLY_API_KEY` | Optional Flow/SDK connection override; required in the test process for the direct HTTP webhook integration test |
 | `POLY_EXEC_API_KEY` | Execution key for deployed server functions; required when production safeguards apply |
-| `TARGET_ENV_ID` | Environment ID declared in this file, checked against `GET /whoami` |
+| `TARGET_ENV_ID` | [Pin to the intended environment](#pin-the-target-environment), checked against `GET /whoami` |
+| `POLY_DEPLOY_SKIP_PATHS` | Optional [deployment exclusions](#skip-sample-deployments), relative to the project root |
 
 Flow reuses the connection saved by `python -m polyapi setup` in this project's
 Python SDK. Neither connection value needs to be in the environment file.
@@ -231,9 +290,6 @@ An optional URL override can select `https://eu1.polyapi.io`,
 There is no fixed regional default. Keep the matching `TARGET_ENV_ID` in the
 selected file; set `POLY_TEST_WEBHOOK_URL` to its deployed webhook when running
 integration tests.
-
-`TARGET_ENV_ID` must be declared in the selected environment file; exporting
-the pin only in your shell is insufficient.
 
 Keep a separate environment file for each target and
 [export `ENVPATH` once](#select-an-environment-once) to select it.

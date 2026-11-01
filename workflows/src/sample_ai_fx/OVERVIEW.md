@@ -56,6 +56,11 @@ Python Flow resolves relative paths from the project root. Use the full
 `workflows/dev.env` path, or the selected file if different. Direct SDK calls
 below load that same file explicitly with `uv --env-file "$ENVPATH"`.
 
+Keep the intended environment's `TARGET_ENV_ID` in that file. Kickstart and
+`flow setup` save this pin; it is separate from your namespace and does not
+change your login. See [target pinning](../../../docs/SETUP.md#pin-the-target-environment)
+for manual setup or a mismatch.
+
 Run the local contract checks:
 
 ```bash
@@ -87,6 +92,11 @@ translation. To retry saved models or deliberately regenerate them, follow
 [Flow training](../../../cli/README.md#openapi-training-cleanup-and-logs).
 
 ### 3. Deploy the AI Function
+
+If `POLY_DEPLOY_SKIP_PATHS` excludes `workflows/src/sample_ai_fx` or a parent
+folder, remove that exclusion in the selected environment file first. `--paths`
+does not override it. See [skipping samples](../../../docs/SETUP.md#skip-sample-deployments)
+for how to keep the lesson files while excluding them from normal pushes.
 
 ```bash
 uv run --locked python cli/flow.py push --paths sample_ai_fx --types ai-functions --dry-run
