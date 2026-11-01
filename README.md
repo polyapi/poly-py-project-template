@@ -1,5 +1,7 @@
 # PolyAPI Python Project Template
 
+![Your next integration. Built in Python. A PolyAPI project template with workflows, artefacts, and development tools.](.images/project-template-banner.svg)
+
 A Python 3.12.12 starter project for building, testing, and deploying PolyAPI
 workflows with the native Python SDK. It includes example integrations,
 shared utilities, local tests, and Flow tooling for managing platform resources.
@@ -8,6 +10,22 @@ Flow synchronizes Python functions, Vari, Tabi, schemas, webhooks, triggers,
 jobs, AI functions, Canopy applications, and GraphQL subscriptions. Its
 `push-dynamic` command rebuilds consuming server functions when a shared client
 changes, including dependencies through other client functions.
+
+> **New to PolyAPI?** Start with the
+> [sample workflow](workflows/src/sample_workflow/OVERVIEW.md), then explore
+> [weather AI](workflows/src/sample_ai_fx/OVERVIEW.md) or the
+> [shared utilities](workflows/src/utilities/common/OVERVIEW.md).
+
+## Table of contents
+
+| I want to… | Start here |
+| --- | --- |
+| Start a project | [Quick start](#quick-start) · [Existing checkout or manual setup](#existing-checkout-or-manual-setup) |
+| Explore the workspace | [Structure](#structure) · [Included examples and tools](#included-examples-and-tools) |
+| Develop locally | [Local development checks](#local-development-checks) · [Pre-commit hook](#enable-the-pre-commit-hook) |
+| Configure a target | [Guided setup](#guided-setup-with-flow) · [Manual target configuration](#configure-a-deployment-target-manually) |
+| Run the sample | [Train, preview, and deploy](#train-preview-and-deploy-the-sample) · [Verification](#verification) |
+| Go deeper | [Flow CLI reference](cli/README.md) · [Agent instructions](AGENTS.md) · [Additional resources](#additional-resources) |
 
 ## Quick start
 

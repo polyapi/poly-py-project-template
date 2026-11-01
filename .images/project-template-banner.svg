@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="420" viewBox="0 0 1280 420" fill="none" role="img" aria-labelledby="title description">
+  <title id="title">Your next integration. Built in Python.</title>
+  <desc id="description">PolyAPI Python project template with the original PolyAPI logo and brand colours. Workflows, artefacts, tests, and Flow tooling. The runtime follows schemas, webhooks, triggers, and functions.</desc>
+  <!-- Brand palette sampled from the original logo: blue #3D77EE, red #E63F35, yellow #F9B528, green #2F9E4B. -->
+  <defs>
+    <pattern id="grid" width="28" height="28" patternUnits="userSpaceOnUse">
+      <circle cx="2" cy="2" r="1" fill="#566078"/>
+    </pattern>
+    <linearGradient id="background" x1="0" y1="0" x2="1280" y2="420" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#111722"/>
+      <stop offset="1" stop-color="#1B2031"/>
+    </linearGradient>
+    <linearGradient id="edge" x1="750" y1="72" x2="1198" y2="350" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#3D77EE"/>
+      <stop offset="0.34" stop-color="#E63F35"/>
+      <stop offset="0.67" stop-color="#F9B528"/>
+      <stop offset="1" stop-color="#2F9E4B"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1280" height="420" rx="20" fill="url(#background)"/>
+  <path d="M1260 0H20C8.954 0 0 8.954 0 20V400C0 411.046 8.954 420 20 420H1260C1271.05 420 1280 411.046 1280 400V20C1280 8.954 1271.05 0 1260 0Z" stroke="#30384A" stroke-width="2"/>
+  <rect x="674" y="20" width="580" height="380" fill="url(#grid)" opacity="0.4"/>
+  <path d="M738 44H1136L1234 142V376H836L738 278V44Z" stroke="#333B51"/>
+
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+    <!-- Original logo: https://polyapi.io/wp-content/uploads/2024/06/polyapi-logo-color-sml.webp; source saved as polyapi-logo.webp. Embedded to avoid external requests. -->
+    <image id="polyapi-logo" x="56" y="34" width="172" height="38" href="data:image/webp;base64,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"/>
+    <path d="M247 42V64" stroke="#46516B"/>
+    <text x="267" y="58" fill="#AAB4C9" font-size="12" font-weight="600" letter-spacing="2.2">PYTHON TEMPLATE</text>
+
+    <text x="52" y="155" fill="#F4F5FA" font-size="57" font-weight="700" letter-spacing="-2.2">Your next integration.</text>
+    <text x="52" y="221" font-size="57" font-weight="700" letter-spacing="-2.2"><tspan fill="#F4F5FA">Built in </tspan><tspan fill="#F9B528">Python.</tspan></text>
+    <text x="56" y="269" fill="#B7C0D3" font-size="20">Workflows, artefacts, and tools to get you started.</text>
+
+    <g font-size="13" font-weight="500">
+      <rect x="56" y="318" width="88" height="32" rx="16" fill="#F9B528" fill-opacity="0.1" stroke="#F9B528" stroke-opacity="0.45"/>
+      <circle cx="72" cy="334" r="3" fill="#F9B528"/>
+      <text x="83" y="339" fill="#DCE2F0">Python</text>
+      <rect x="154" y="318" width="56" height="32" rx="16" fill="#3D77EE" fill-opacity="0.1" stroke="#3D77EE" stroke-opacity="0.45"/>
+      <circle cx="170" cy="334" r="3" fill="#3D77EE"/>
+      <text x="181" y="339" fill="#DCE2F0">uv</text>
+      <rect x="220" y="318" width="80" height="32" rx="16" fill="#E63F35" fill-opacity="0.1" stroke="#E63F35" stroke-opacity="0.45"/>
+      <circle cx="236" cy="334" r="3" fill="#E63F35"/>
+      <text x="247" y="339" fill="#DCE2F0">pytest</text>
+      <rect x="310" y="318" width="72" height="32" rx="16" fill="#2F9E4B" fill-opacity="0.1" stroke="#2F9E4B" stroke-opacity="0.45"/>
+      <circle cx="326" cy="334" r="3" fill="#2F9E4B"/>
+      <text x="337" y="339" fill="#DCE2F0">Flow</text>
+    </g>
+  </g>
+
+  <rect x="756" y="82" width="448" height="278" rx="15" fill="#0B101A" opacity="0.45"/>
+  <rect x="750" y="72" width="448" height="278" rx="15" fill="#171D2B" stroke="url(#edge)" stroke-opacity="0.65"/>
+  <path d="M751 126H1197" stroke="#343D51"/>
+  <circle cx="774" cy="99" r="4" fill="#3D77EE"/>
+  <circle cx="790" cy="99" r="4" fill="#E63F35"/>
+  <circle cx="806" cy="99" r="4" fill="#F9B528"/>
+  <circle cx="822" cy="99" r="4" fill="#2F9E4B"/>
+
+  <g font-family="'SFMono-Regular', Consolas, 'Liberation Mono', monospace" font-size="17">
+    <text x="847" y="105" fill="#DCE2F0">your-project/</text>
+    <path d="M785 148V302M785 164H802M785 210H802M785 256H802M785 302H802" stroke="#46516B" stroke-width="1.5"/>
+
+    <g stroke-width="1.6" stroke-linejoin="round">
+      <path d="M819 155H826L830 159H842V174H819Z" stroke="#3D77EE"/>
+      <path d="M819 201H826L830 205H842V220H819Z" stroke="#E63F35"/>
+      <path d="M819 247H826L830 251H842V266H819Z" stroke="#F9B528"/>
+      <path d="M819 293H826L830 297H842V312H819Z" stroke="#2F9E4B"/>
+    </g>
+    <text x="858" y="171" fill="#EEF1F8">.agents/</text>
+    <text x="858" y="217" fill="#EEF1F8">cli/</text>
+    <text x="858" y="263" fill="#EEF1F8">designs/</text>
+    <text x="858" y="309" fill="#EEF1F8">workflows/</text>
+  </g>
+
+  <path d="M1178 52L1185 59L1178 66L1171 59Z" fill="#E63F35"/>
+  <path d="M724 340L730 346L724 352L718 346Z" fill="#F9B528"/>
+  <circle cx="1214" cy="288" r="4" fill="#2F9E4B"/>
+  <text x="975" y="388" text-anchor="middle" fill="#AAB4C9" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10" font-weight="600" letter-spacing="1.2">SCHEMAS → WEBHOOKS → TRIGGERS → FUNCTIONS</text>
+</svg>
