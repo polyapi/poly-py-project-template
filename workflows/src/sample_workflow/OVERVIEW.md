@@ -68,6 +68,12 @@ environment file to the intended PolyAPI environment; it is separate from the
 namespace below. Kickstart and `flow setup` save this verified ID. For manual
 setup or a mismatch, follow [target pinning](../../../docs/SETUP.md#pin-the-target-environment).
 
+Before continuing, use the project's [pinned Python SDK](../../../docs/SETUP.md#python-sdk-version-and-target)
+and complete `flow setup` for the intended instance. Kickstart already installs
+the pinned SDK and configures the connection. Python does not use the
+TypeScript `polyapi@na2` package-tag command; review any required Python SDK
+version change separately from choosing the target.
+
 This tutorial assumes you are using `example` as your namespace in
 `workflows/dev.env`. **Check this setting in the file**, rather than entering it
 as a terminal command:

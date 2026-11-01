@@ -36,6 +36,35 @@ flow push-dynamic --paths sample_workflow --dry-run
 See [guided setup details](#guided-setup-with-flow) for target changes, existing
 commands, and configuration safeguards. Setup itself does not deploy resources.
 
+## Python SDK version and target
+
+Python SDK compatibility matters too, but this template does not select SDK
+packages using TypeScript's instance tags such as `polyapi@na2`. It installs
+the same `polyapi-python` version pinned in `pyproject.toml` and `uv.lock` for
+each region. Kickstart and the `flow setup` shell helper install those pinned
+dependencies; they do not select a newer SDK release based on the target URL.
+
+For an existing checkout, restore the pinned dependencies and check the
+installed **SDK** version:
+
+```bash
+uv sync --locked
+uv run --locked python -m polyapi --version
+```
+
+Use `flow setup` to choose the intended URL and key, generate the SDK bindings,
+and confirm the target pin. Changing from one instance to another does not
+by itself select a different Python SDK package. Flow's `--version` reports
+Flow's own version, which is separate from the SDK version above.
+
+If your target requires a different Python SDK release, confirm the supported
+SDK release with the release guidance or your platform owner, then review
+the SDK pin and `uv.lock` change together. Python and TypeScript SDK versions
+are independent; do not infer a Python version from a TypeScript update prompt.
+After an approved SDK update, rerun setup and generation, then the local checks
+before deployment. See the [native Python SDK guide](https://docs.polyapi.io/generated_sdks/python.html#setup-and-generate)
+for its connection and generation commands.
+
 ## Select an environment once
 
 For the explicit Python commands used in the sample guides, select the file

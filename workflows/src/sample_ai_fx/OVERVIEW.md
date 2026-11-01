@@ -61,6 +61,10 @@ Keep the intended environment's `TARGET_ENV_ID` in that file. Kickstart and
 change your login. See [target pinning](../../../docs/SETUP.md#pin-the-target-environment)
 for manual setup or a mismatch.
 
+Use the project's [pinned Python SDK](../../../docs/SETUP.md#python-sdk-version-and-target)
+and configured connection before this lesson. Kickstart installs that pin for
+every region; it does not select SDK packages using TypeScript's instance tags.
+
 Run the local contract checks:
 
 ```bash
