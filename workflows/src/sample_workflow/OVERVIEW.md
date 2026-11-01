@@ -1,4 +1,4 @@
-# Message of the day
+# Message of the day: your first PolyAPI workflow
 
 Build a protected endpoint that greets someone with advice or a joke. This lesson
 introduces webhooks, triggers, server and client functions, trained API Functions,
@@ -33,13 +33,12 @@ flowchart TD
     classDef red fill:#FDEDEB,color:#172B4D,stroke:#E63F35
     class R,T blue
     class V,A yellow
-    class S green
-    class G green
+    class S,G green
     class X red
 ```
 
 **Flow** is this project's command-line tool for creating and updating resources
-in PolyAPI. The **generated Python SDK** gives you Python functions for those
+in PolyAPI. The **generated SDK** gives you Python functions for those
 resources, such as `poly.*` calls and `vari.*` configuration reads. **Vari** stores
 configuration values; **Canopy** is the PolyAPI web interface used below to
 manage them. The **PolyAPI runtime** hosts the endpoint and server functions;
@@ -57,6 +56,7 @@ is separate from the [Weather AI lesson](../sample_ai_fx/OVERVIEW.md).
 | Client function | Select an API by mood and check its result | [motd_client](client/motd_client_cfx.py) |
 | API Functions | Make the outbound joke/advice HTTP calls through PolyAPI | [Joke spec](artefacts/specs/joke_api.json), [advice spec](artefacts/specs/advice_api.json) |
 | Vari | Demonstrate protected injection and readable configuration | [SECRET joke config](artefacts/vari/joke_api_config.json), [OBSCURED advice config](artefacts/vari/advice_api_config.json) |
+| Error handler and job | Explore failure handling and scheduled calls | [Error handler](server/motd_error_handler_sfx.py), [error trigger](artefacts/triggers/motd_error_trigger.json), [job](artefacts/jobs/motd_job.json) |
 
 ## Run your first request
 
@@ -110,6 +110,11 @@ with mocked SDK boundaries, not deployed PolyAPI behavior.
 
 ### 2. Train the two outbound APIs
 
+An OpenAPI specification describes an HTTP API. Training makes that API
+available as functions your workflow can call. Train **both** bundled
+specifications: the client function refers to both APIs even though your first
+request will use only advice.
+
 **In your terminal**, preview the two bundled API descriptions:
 
 ```bash
@@ -120,29 +125,36 @@ uv run --locked python -m cli.operations train-openapi workflows/src/sample_work
 your `example.sample_workflow` context. This command checks local inputs only;
 it does not create functions in PolyAPI.
 
-Then run the real training command **in your terminal**:
+**In your terminal**, register both APIs once the preview is correct:
 
 ```bash
 uv run --locked python -m cli.operations train-openapi workflows/src/sample_workflow/artefacts/specs --context example.sample_workflow --disable-ai
 ```
 
-The real command verifies the target, translates the specs with a `hostUrl`
-argument, saves `.poly.json` models, creates the API Functions, and regenerates
-the Python SDK. `--disable-ai` skips optional AI-generated descriptions and
-names, retaining the translator's names.
+Real training verifies the target, translates each spec with a `hostUrl`
+argument, saves its model, creates the API Functions, and regenerates the SDK.
+`--disable-ai` skips optional AI-generated descriptions and names, retaining
+the translator's names. Training does not call the joke or advice provider.
 
-**Checkpoint:** the command prints `Saved model:` for these new files next to
-the original API descriptions:
+**Checkpoint — files:** the command prints `Saved model:` for these new files
+next to the original API descriptions. A **model** is the generated JSON
+description of the resources PolyAPI will register. Open each file in your
+editor and check the `name` and `context` in its `functions` array:
 
-- `workflows/src/sample_workflow/artefacts/specs/advice_api.poly.json`
-- `workflows/src/sample_workflow/artefacts/specs/joke_api.poly.json`
+| Generated file, relative to the project root | Expected function name | Expected context |
+| --- | --- | --- |
+| `workflows/src/sample_workflow/artefacts/specs/joke_api.poly.json` | `getRandomJoke` | `example.sample_workflow` |
+| `workflows/src/sample_workflow/artefacts/specs/advice_api.poly.json` | `getRandomAdvice` | `example.sample_workflow` |
 
-Open them in your editor and look for `getRandomAdvice` and `getRandomJoke`,
-each with a `hostUrl` argument and your chosen context. The generated SDK's
-asynchronous Python calls end in `_async`, as shown in
-[motd_client](client/motd_client_cfx.py). The offline preview cannot establish
-those translated names. See [training and SDK reference](#training-and-sdk-reference)
-for the SDK file location or if models already exist when you retry.
+**Checkpoint — SDK:** open the generated definitions using the
+[SDK file locations](#training-and-sdk-reference). The expected calls are
+`poly.example.sample_workflow.getRandomJoke_async(hostUrl)` and
+`poly.example.sample_workflow.getRandomAdvice_async(hostUrl)`, as used in
+[motd_client](client/motd_client_cfx.py). Each definition should have a `hostUrl`
+argument. If either name is missing, check the training output and model files,
+then repeat the [SDK generation command](#training-and-sdk-reference) for the
+same environment before continuing. An offline preview alone cannot generate
+these definitions. See the same reference if models already exist when you retry.
 
 ### 3. Preview and deploy the workflow
 
@@ -159,7 +171,7 @@ should include the sample's two variables, four functions, webhook, two
 triggers, and disabled job. `push-dynamic` also rebuilds local server functions
 that use a changed client function, so check any additional planned changes.
 
-When the plan is correct, deploy it **from your terminal**:
+**In your terminal**, deploy the workflow once the plan is correct:
 
 ```bash
 uv run --locked python cli/flow.py push-dynamic --paths sample_workflow
@@ -168,14 +180,21 @@ uv run --locked python cli/flow.py push-dynamic --paths sample_workflow
 Flow verifies the environment for both commands and normally regenerates the
 SDK after deployment.
 
-**Checkpoint:** deployment completes without errors. In Canopy, find the
-webhook named `motd` in the `example.sample_workflow` context of your selected
-environment. Copy its full `url`, including the environment subdomain. Use that
-complete value in the next step; do not build it from the gateway base URL.
+**Checkpoint:** deployment completes without errors. In Canopy, select the same
+environment and confirm the resources appear under `example.sample_workflow`.
+Your first request uses `wise`, which reads the public host already stored in
+`advice_api_config`. You can configure the joke branch's secret
+[after this first request](#5-configure-injection-and-try-a-joke).
 
 ### 4. Invoke the advice path
 
-**In the same terminal**, run these prompts. Paste the complete deployed webhook
+**In Canopy**, select the environment used for deployment and open the webhook
+named `motd` under `example.sample_workflow`. Copy its **full URL**, including the
+environment subdomain; do not build it from the gateway base URL or the path in
+its JSON file. These direct HTTP requests use the URL and key you supply; they
+do not run Flow's target check.
+
+**In your terminal**, run these prompts. Paste the complete deployed webhook
 URL and a PolyAPI key for that same environment, pressing Enter after each.
 The key stays hidden while you enter it:
 
@@ -190,24 +209,28 @@ A value in an env file does not automatically become a Bash variable. If you
 prefer env-file loading, use the [live test command](#verification) after
 configuring both moods.
 
-Now send the request **from the same terminal**:
+**In your terminal**, send the request from the same session. `curl -i` shows
+the HTTP status as well as the JSON body:
 
 ```bash
 curl -i -X POST "$POLY_TEST_WEBHOOK_URL" \
   --header 'Content-Type: application/json' \
   --header "Authorization: Bearer $POLY_API_KEY" \
-  --data '{"name":"Ada","mood":"wise"}'
+  --data '{ "name": "Ada", "mood": "wise" }'
 ```
 
 Expect HTTP 200 and a body with this shape; the advice text varies:
 
 ```json
-{"statusCode":200,"message":"Hi Ada! <advice returned by the provider>"}
+{ "statusCode": 200, "message": "Hi Ada! <advice returned by the provider>" }
 ```
 
-**Checkpoint:** you have exercised webhook → security function → trigger →
-server → client → trained API Function. The advice configuration ships with its
-public host URL, so this path needs no extra provider account or secret.
+**Checkpoint:** the message starts with `Hi Ada!` and includes advice. Provider
+text changes between calls. You have exercised webhook → security function →
+trigger → server → client → trained API Function. Find `motd_server` in Canopy to
+inspect its logs; `motd_client` runs inside that server function and has no
+separate log stream. The advice configuration ships with its public host URL,
+so this path needs no extra provider account or secret.
 
 **Your first integration works.** You can stop here or continue below to learn
 how to use secrets and change the sample.
@@ -216,23 +239,26 @@ how to use secrets and change the sample.
 
 This is an optional next step after the advice request succeeds.
 
-**In Canopy**, open your namespace's `sample_workflow.joke_api_config` Vari and
-set its value as an **Object**. Paste this JSON as the variable's value, not into
-your terminal:
+**In Canopy**, open `joke_api_config` under `example.sample_workflow` in the same
+environment. Set its value as an **Object**. Paste this JSON as the variable's
+value, not into your terminal:
 
 ```json
-{"hostUrl":"https://official-joke-api.appspot.com"}
+{ "hostUrl": "https://official-joke-api.appspot.com" }
 ```
 
-The host is public, but the sample deliberately marks it SECRET to teach
-injection. Flow creates the variable without committing its value. Use Canopy
-for this object-valued secret; see [Vari details](#vari-details) for the SDK caveat.
+This URL is public, but the sample deliberately stores it as `SECRET` to teach
+injection. Its JSON artefact has no value, so deployment alone does not populate
+it. The API Function receives the injected `hostUrl`; the client function does
+not read the secret itself. Use Canopy for this object-valued secret; see
+[Vari details](#vari-details) for the Python SDK caveat.
 
-Repeat the request with `"mood":"funny"`. Expect HTTP 200 with a greeting that
-joins a joke's setup and punchline:
+Repeat the request from [step 4](#4-invoke-the-advice-path) with
+`"mood": "funny"` and the original `"name": "Ada"`. Expect HTTP 200 with a
+greeting that joins a joke's setup and punchline:
 
 ```json
-{"statusCode":200,"message":"Hi Ada! <setup> ... <punchline>"}
+{ "statusCode": 200, "message": "Hi Ada! <setup> ... <punchline>" }
 ```
 
 **Checkpoint:** `.inject("hostUrl")` passes an opaque reference to the API
@@ -244,14 +270,14 @@ the SECRET value.
 These exercises are optional. Start with the small greeting change, then explore
 the other behavior when you are ready.
 
-- In [motd_server](server/motd_server_sfx.py), change the final greeting from
-  `Hi` to `Hello`. Repeat the deployment preview and push from step 3, then
-  send the advice request again. You should now see `Hello Ada!` followed by
+- In [motd_server](server/motd_server_sfx.py), change the greeting from
+  `Hi` to `Hello`. Repeat the [deployment preview and push](#3-preview-and-deploy-the-workflow),
+  then send the [advice request](#4-invoke-the-advice-path) again. You should now see `Hello Ada!` followed by
   the advice. Restore `Hi` and redeploy afterward so the checked-in tests and
   response examples still match.
 - Change `Ada` to your name and switch between `wise` and `funny`. Trace the two
   branches in [motd_client](client/motd_client_cfx.py).
-- Send a whitespace-only name or `"mood":"sleepy"`. Expect rejection before the
+- Send a whitespace-only name or `"mood": "sleepy"`. Expect rejection before the
   main server runs; inspect both the HTTP status and the platform's response.
 - Explain why advice uses a read while the joke uses injection. Neither value
   is cached, and only one can be read by the client.
@@ -262,10 +288,12 @@ the other behavior when you are ready.
 - Read the mocked provider-failure cases in [the local tests](tests/test_motd.py).
   Observe how failures become bounded messages without exposing raw errors.
 
-## Flow: motd_server
+## Runtime reference
 
-The remaining sections are reference material for understanding or extending
-the working sample; they are not extra steps needed for your first request.
+The remaining sections are reference material for understanding or extending the
+working sample; they are not extra steps needed for your first request.
+
+### Request and response
 
 ```mermaid
 flowchart TD
@@ -303,6 +331,12 @@ are separate concepts: a JSON field alone would not set the HTTP status.
 Deployed objects use SDK-supported `Dict` annotations and local `TypedDict`
 responses. Mood is a string in the generated contract, checked at runtime.
 
+Each deployable Python file keeps its `polyConfig` and runtime types inline.
+The webhook declares its payload schema in its JSON artefact; the sample does
+not use a separate schema artefact or persist workflow state in Tabi tables.
+
+### Error handling
+
 [The error handler](server/motd_error_handler_sfx.py) preserves only bounded
 messages and safe function names; arbitrary transport details and event bodies
 are not returned or logged. The server's handled HTTP 500 depends on that handler
@@ -310,12 +344,23 @@ call succeeding. Its own failure remains unhandled.
 
 [The error trigger](artefacts/triggers/motd_error_trigger.json) separately selects
 platform failures on the webhook path. Its delivery is distinct from the direct
-call in the server's `except` block and needs deployed verification. Neither
-mechanism persists workflow state; this sample uses no Tabi tables.
+call in the server's `except` block and needs deployed verification.
+
+### Scheduled calls
+
+The [scheduled job](artefacts/jobs/motd_job.json) starts disabled. When enabled,
+it calls `motd_server` directly every 60 minutes with `name: "Scheduler"` and
+`mood: "wise"`, plus empty headers and parameters. It does not pass through the
+webhook or its security function, so the server repeats input validation.
+
+Leave the job disabled while following this tutorial. If you later want
+recurring calls, set its `enabled` field to `true` and repeat the
+[deployment preview and push](#3-preview-and-deploy-the-workflow). Review its
+execution results separately from the webhook response: a job has no HTTP caller.
 
 ## Verification
 
-Run the local tests from step 1 after edits. They check the runtime branches,
+Run the local tests from [step 1](#1-confirm-setup-and-namespace) after edits. They check the runtime branches,
 including that the opaque injection reference reaches the API boundary unchanged.
 The separate [preflight tests](../../../cli/tests/test_preflight.py) also check
 native SDK payload schemas. Neither proves live secret resolution.
@@ -386,6 +431,11 @@ regenerate instead of editing them directly.
 
 ### Vari details
 
+Vari secrecy levels control how code and humans can access a stored value.
+The platform supports `NONE`, `OBSCURED`, `SECRET`, and `PARTIAL`; this sample
+uses two levels to demonstrate the difference, even though both values are
+public API base URLs.
+
 The [joke config](artefacts/vari/joke_api_config.json) is SECRET. Its `.inject()`
 reference must go unchanged into `getRandomJoke_async`; normal API execution
 resolves it, while the sample rejects direct API execution for this path.
@@ -393,7 +443,7 @@ In the pinned SDK 0.3.21.dev1, generated Vari `update()` / `update_async()` meth
 form-encode Python dictionaries, so use Canopy to preserve this Object value.
 
 The [advice config](artefacts/vari/advice_api_config.json) is OBSCURED and starts
-with `{"hostUrl":"https://api.adviceslip.com"}`. It permits runtime reads while
+with `{ "hostUrl": "https://api.adviceslip.com" }`. It permits runtime reads while
 masking the UI. `get_async()` returns JSON text, decoded on every request.
 Neither configuration nor the injection reference is cached. Both upstream APIs
 are public and need no account or API key.
