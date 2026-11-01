@@ -32,6 +32,16 @@ from typing import Any, Iterable, Iterator, Literal, cast
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+# Updating and recovery must work without SDK imports or target configuration.
+if __name__ == "__main__" and sys.argv[1:2] == ["self-update"]:
+    import runpy
+
+    sys.dont_write_bytecode = True
+    updater = Path(__file__).resolve().with_name("self_update.py")
+    sys.argv = [str(updater), *sys.argv[2:]]
+    runpy.run_path(str(updater), run_name="__main__")
+    raise SystemExit(0)
+
 from cli import __version__
 
 # Version checks must work before SDK dependencies or target setup are present.
@@ -883,6 +893,7 @@ ROOT_HELP_EPILOG = textwrap.dedent("""
       python cli/flow.py train-openapi --help
       python cli/flow.py train-model --help
       python cli/flow.py delete-content --help
+      python cli/flow.py self-update --check
 
     Notes:
       - Functions are discovered from inline polyConfig in Python source; no peer JSON is required.
@@ -1649,6 +1660,9 @@ def create_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", metavar="command")
     subparsers.add_parser(
         "setup", help="Configure the SDK, project target, and editor."
+    )
+    subparsers.add_parser(
+        "self-update", help="Preview, update, or restore this project's Flow CLI."
     )
     push_parser = subparsers.add_parser(
         "push",
@@ -10172,6 +10186,10 @@ def sync_subscriptions(
 
 
 def main() -> int:
+    if sys.argv[1:2] == ["self-update"]:
+        from cli.self_update import main as update_main
+
+        return update_main(sys.argv[2:])
     if sys.argv[1:2] and sys.argv[1] in {
         "train-openapi",
         "train-model",

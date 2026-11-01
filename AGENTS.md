@@ -20,6 +20,7 @@ local skill below for the behavior being implemented or reviewed.
 | Shell setup and editor/target selection | [Interactive setup](cli/README.md#interactive-setup), `cli/setup.py`, and `cli/shell/` |
 | New-project bootstrapping | [Getting started](README.md#getting-started), `kickstart/kickstart.sh`, `kickstart/kickstart.py`, and `kickstart/configure.py` |
 | Deployment, API training, or schema refresh | [Flow reference](cli/README.md), then `cli/flow.py`, `cli/operations.py`, or `cli/schema_refresh.py` |
+| Flow upgrades and recovery | [Upgrading Flow](docs/UPGRADING_FLOW.md), `cli/self_update.py`, and `cli/tests/test_self_update.py` |
 | Local checks or CI | `Makefile`, `pyproject.toml`, `conftest.py`, and `.github/workflows/ci.yml` |
 
 Read only the paths relevant to the task. Inspect a maintained example before

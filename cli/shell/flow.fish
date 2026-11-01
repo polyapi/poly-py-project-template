@@ -13,6 +13,31 @@ function flow --description 'Project-local Python Flow'
         end
         set flow_root (path dirname "$flow_root")
     end
+    # Local maintenance must not select a target or install dependencies.
+    if contains -- "$argv[1]" self-update --version -V
+        set -l flow_python "$flow_root/.venv/bin/python"
+        if not test -x "$flow_python"
+            set flow_python (command -s python3)
+            if test -z "$flow_python"
+                set flow_python (command -s python)
+            end
+        end
+        if test -z "$flow_python"; or not "$flow_python" -B -c 'import sys; sys.exit(sys.version_info < (3, 11))'
+            echo 'Python 3.11 or newer is required for local Flow maintenance.' >&2
+            return 1
+        end
+        set -l flow_entry cli/flow.py
+        set -l flow_args $argv
+        if test "$argv[1]" = self-update
+            set flow_entry cli/self_update.py
+            set flow_args $argv[2..-1]
+        end
+        pushd "$flow_root"; or return 1
+        "$flow_python" -B "$flow_entry" $flow_args
+        set -l flow_status $status
+        popd
+        return $flow_status
+    end
     if not command -q uv
         echo 'Install uv and add it to PATH first.' >&2
         return 1

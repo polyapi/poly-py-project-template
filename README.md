@@ -89,6 +89,7 @@ workflows/src/ sample integrations, shared utilities, and runtime tests
 | --- | --- |
 | [Setup and development](docs/SETUP.md) | Shell helpers, manual targets, SDK pins, editor setup, local checks, and live-test opt-ins. |
 | [Flow CLI](cli/README.md) | Dependency-aware deployment, API training, Canopy, subscriptions, cleanup, logs, and safeguards. |
+| [Upgrading Flow](docs/UPGRADING_FLOW.md) | Self-update, customization review, backups, and recovery. |
 | [Project conventions](docs/CONVENTIONS.md) | Workflow layout, naming, generated SDK usage, ownership, and tests. |
 | [Agent guidance](AGENTS.md) · [Bundled skills](docs/SETUP.md#agent-skills) | Repository rules and maintained skills from [poly-skills](https://github.com/polyapi/poly-skills). |
 

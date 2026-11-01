@@ -57,6 +57,10 @@ and confirm the target pin. Changing from one instance to another does not
 by itself select a different Python SDK package. Flow's `--version` reports
 Flow's own version, which is separate from the SDK version above.
 
+To update Flow itself, use `flow self-update --check`, then `flow self-update`.
+The [upgrade guide](UPGRADING_FLOW.md) covers backups, compatibility review, and
+rollback. Updating Flow preserves the SDK dependency and connection setup.
+
 If your target requires a different Python SDK release, confirm the supported
 SDK release with the release guidance or your platform owner, then review
 the SDK pin and `uv.lock` change together. Python and TypeScript SDK versions
@@ -247,6 +251,8 @@ overwritten. The helper is a shell function because an executable cannot
 activate its parent shell. PowerShell uses your existing execution policy.
 
 Once loaded, `flow` works from anywhere inside the project.
+`flow --version` and `flow self-update` do not load the selected environment.
+Self-update uses the existing interpreter and never runs `uv sync`.
 
 Rerun `flow setup` to change targets. Enter retains the SDK's previous URL/key
 and the previous file selection when the authenticated target is unchanged.

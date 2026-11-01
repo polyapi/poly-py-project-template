@@ -12,11 +12,15 @@ uv run --locked python cli/flow.py --version
 ```
 
 Before dependency setup, `python3 cli/flow.py --version` works with just Python.
-Flow starts at **1.1.0**, matching the TypeScript Flow baseline. Its version is
+Flow's versioned baseline was **1.1.0**; **1.2.0** adds self-update. Its version is
 maintained in `cli/__init__.py`, independently of the workspace and PolyAPI SDK.
 Patch releases contain fixes, minor releases add compatible features, and
 major releases introduce breaking changes. Matching language versions do not
 imply identical features; each CLI's version advances with its own releases.
+
+Preview and apply updates with `flow self-update --check` and
+`flow self-update`. See [Upgrading Flow](../docs/UPGRADING_FLOW.md) for
+compatibility checks, customization review, and recovery.
 
 See [setup and development](../docs/SETUP.md) for Python 3.12.12 setup,
 dependencies, and environment configuration. The
@@ -68,9 +72,12 @@ available for existing checkouts and target changes.
 
 Load the [Bash, Fish, or PowerShell helper](../docs/SETUP.md#existing-checkout-or-manual-setup)
 once, then run `flow setup`. The shell function activates the project's `.venv`
-and forwards commands to `uv run --locked python cli/flow.py`, with the selected
-`ENVPATH`. It finds the nearest Python Flow project from the current directory;
-it does not bind future commands to the checkout where the profile was installed.
+and forwards resource commands to `uv run --locked python cli/flow.py`, with
+the selected `ENVPATH`. It finds the nearest Python Flow project from the current
+directory; it does not bind future commands to the checkout where the profile
+was installed.
+Version and self-update commands bypass environment selection; self-update
+uses the existing interpreter without syncing or installing dependencies.
 
 Setup uses the pinned Python SDK's native interactive setup and generation.
 It removes inherited `POLY_API_KEY` and `POLY_API_BASE_URL` only in its child
