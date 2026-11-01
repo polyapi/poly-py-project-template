@@ -221,7 +221,7 @@ def test_training_translates_with_host_argument_then_uses_exact_upsert(config):
     assert calls[0].args == ("POST", "/specification-input/oas")
     assert calls[0].kwargs == {
         "params": {"context": "example.demo", "hostUrlAsArgument": "hostUrl"},
-        "raw_body": text,
+        "raw_body": json.dumps(json.loads(text)),
         "headers": {"Content-Type": "text/plain"},
     }
     assert calls[1].args == ("PUT", "/functions/api")
@@ -295,7 +295,9 @@ def test_invalid_translation_stops_before_any_training(config):
     assert not list(config.repo_root.glob("*.poly.json"))
 
 
-def test_schema_dependencies_precede_functions_and_cycles_fail_before_writes(config):
+def test_schema_dependencies_precede_functions_and_recursive_contracts_are_preserved(
+    config,
+):
     model = api_model()
     model["schemas"] = [
         {
@@ -320,8 +322,9 @@ def test_schema_dependencies_precede_functions_and_cycles_fail_before_writes(con
         ("/functions/api", "getRandomJoke"),
     ]
     model["schemas"][1]["definition"] = {"x-poly-ref": {"path": "example.demo.Parent"}}
-    with pytest.raises(flow.DeployError, match="cycle"):
-        operations.validate_model(model, config)
+    recursive = operations.validate_model(model, config)
+    assert {item["name"] for item in recursive["schemas"]} == {"Parent", "Child"}
+    assert recursive["schemas"][0]["definition"] == model["schemas"][1]["definition"]
 
 
 def test_cross_file_duplicate_model_identities_fail_before_upserts(config):

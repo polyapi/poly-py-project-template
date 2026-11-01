@@ -1,6 +1,7 @@
 import copy
 from contextlib import closing
 import json
+import os
 from pathlib import Path
 import ssl
 import subprocess
@@ -36,12 +37,24 @@ def platform_spec():
 
 @pytest.fixture
 def schema_source_env(monkeypatch):
+    from cli import environment
+
+    snapshot = dict(os.environ)
+    monkeypatch.setattr(environment, "get_saved_sdk_connection", lambda: (None, None))
     for name in (
+        "BASE_URL",
         "POLY_API_BASE_URL",
+        "POLYAPI_BASE_URL",
+        "API_KEY",
+        "POLY_API_KEY",
+        "POLYAPI_API_KEY",
         "POLYAPI_OPENAPI_SPEC_URL",
         "POLYAPI_DESIGNS_DIR",
     ):
         monkeypatch.delenv(name, raising=False)
+    yield
+    os.environ.clear()
+    os.environ.update(snapshot)
 
 
 @pytest.mark.parametrize(
@@ -64,6 +77,22 @@ def test_refresh_uses_selected_instance(
     assert refresh.refresh(tmp_path) == len(refresh.TARGETS)
 
     read_spec.assert_called_once_with(base_url.rstrip("/") + "/swagger-json")
+
+
+def test_refresh_uses_saved_setup_url_without_env_binding(
+    tmp_path, monkeypatch, schema_source_env
+):
+    from cli import environment
+
+    monkeypatch.setattr(
+        environment,
+        "get_saved_sdk_connection",
+        lambda: ("placeholder-saved-key", "https://saved.invalid"),
+    )
+    read_spec = Mock(return_value=platform_spec())
+    monkeypatch.setattr(refresh, "read_spec", read_spec)
+    assert refresh.refresh(tmp_path) == len(refresh.TARGETS)
+    read_spec.assert_called_once_with("https://saved.invalid/swagger-json")
 
 
 @pytest.mark.parametrize("explicit_source", [None, "designs/platform-openapi.json"])

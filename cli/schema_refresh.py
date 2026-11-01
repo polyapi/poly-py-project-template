@@ -272,10 +272,27 @@ def refresh(
 ) -> int:
     source = source or os.getenv("POLYAPI_OPENAPI_SPEC_URL")
     if not source:
-        base_url = os.getenv("POLY_API_BASE_URL", "").strip().rstrip("/")
+        # An explicit spec needs no SDK setup. For live discovery, use the same
+        # selected connection as Flow, including saved setup and URL overrides.
+        from cli.environment import (
+            ConnectionError,
+            get_api_key_and_url,
+            normalize_connection_settings,
+        )
+
+        try:
+            selected_url = normalize_connection_settings(os.environ).get(
+                "POLY_API_BASE_URL"
+            )
+            if selected_url is None:
+                _, selected_url = get_api_key_and_url()
+        except ConnectionError as error:
+            raise SchemaRefreshError(str(error)) from None
+        base_url = (selected_url or "").strip().rstrip("/")
         if not base_url:
             raise SchemaRefreshError(
-                "Set POLY_API_BASE_URL, POLYAPI_OPENAPI_SPEC_URL, or pass --source"
+                "Set POLY_API_BASE_URL, run `flow setup`, set "
+                "POLYAPI_OPENAPI_SPEC_URL, or pass --source"
             )
         parsed = urlsplit(base_url)
         if (

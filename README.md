@@ -11,8 +11,38 @@ changes, including dependencies through other client functions.
 
 ## Quick start
 
-Install [uv](https://docs.astral.sh/uv/), then open a terminal in your cloned
-repository's root. Load the helper for your shell once:
+Getting started is straightforward. Run this command and follow the prompts
+to bootstrap the project locally:
+
+```bash
+git clone git@github.com:polyapi/poly-py-project-template.git && ./poly-py-project-template/kickstart/kickstart.sh
+```
+
+Requires [uv](https://docs.astral.sh/uv/), Git, GitHub SSH access to the template
+and skills repositories, and the VS Code `code` command. GitHub CLI (`gh`) and
+Node.js are not required.
+
+Kickstart asks for the project name, parent directory (default `~/Code/poly`),
+namespace (default `demo`), a hidden API key, and region (`dev`, `na1`, `na2`,
+or `eu1`). Relative parent paths resolve from your current terminal directory.
+It installs the pinned Python dependencies and Python skills (including the
+dedicated `api-function-training` skill), updates starter
+contexts and SDK references, verifies your target, and generates the SDK.
+Confirm whether to use `dev.env` or `prod.env`; the verified `TARGET_ENV_ID` is
+saved automatically. The URL/key stay in native SDK setup.
+
+It then creates `main` with an initial commit, switches to `develop`, and opens
+VS Code. The current template checkout, including pending source changes, is
+copied; ignored local configuration and credential files are excluded.
+Kickstart does not deploy resources or train the sample APIs.
+The training skill must be available on `poly-skills/main`; setup stops with a
+clear message if it is missing.
+
+### Existing checkout or manual setup
+
+These setup steps are only needed if you did not use kickstart, or want to
+change the target of an existing project. From the project root, load the
+helper for your shell once:
 
 | Shell | Load the `flow` command |
 | --- | --- |
@@ -47,6 +77,7 @@ commands, and configuration safeguards. Setup itself does not deploy resources.
 .github/workflows/ci.yml     Python formatting, lint, and tests
 AGENTS.md                   Coding-agent navigation and instructions
 cli/                         Python Flow and its regression tests
+kickstart/                   Interactive project bootstrap
 designs/examples/            Canopy and subscription starter JSON
 workflows/src/
   sample_workflow/           Message-of-the-day webhook workflow
@@ -105,6 +136,9 @@ overrides, AI enrichment, and validation flags.
 
 ## Guided setup with `flow`
 
+Use this alternative when you did not use kickstart, or rerun it to change an
+existing project's target. Kickstart already configures the new project.
+
 Start with the [quick start](#quick-start). The helper activates the project
 venv even when another venv was active.
 
@@ -115,7 +149,9 @@ environment names, suggests `dev` or `prod`, and asks you to confirm the file:
 file choice does not change the actual environment or bypass production guards.
 
 If the file is missing, setup offers to copy `workflows/dev.env.example`. It
-saves the SDK URL/key and verified `TARGET_ENV_ID`, preserving other settings.
+saves the verified `TARGET_ENV_ID`, preserving other settings. The URL and API
+key stay in native SDK setup; new environment files do not duplicate them.
+Existing explicit connection overrides are updated to the confirmed target.
 Changing an existing file's target requires a separate confirmation and clears
 its execution key; add the correct `POLY_EXEC_API_KEY` before deploying server
 functions. The namespace is preserved; follow the customization instructions
@@ -183,17 +219,24 @@ Edit the copy with your target's values:
 | --- | --- |
 | `POLYAPI_NAMESPACE` | Root context owned by this project; the sample uses `example` |
 | `LOG_LEVEL` / `SLACK_CHANNEL_ID` / `SLACK_WORKSPACE_TYPE` | Log threshold, Slack destination, and `community` or `internal` workspace when deploying common utilities |
-| `POLY_API_BASE_URL` | Base URL of your selected PolyAPI instance |
-| `POLY_API_KEY` | Key for the selected environment |
+| `POLY_API_BASE_URL` | Optional override of the instance URL saved by SDK setup |
+| `POLY_API_KEY` | Optional override of the environment key saved by SDK setup |
 | `POLY_EXEC_API_KEY` | Execution key for deployed server functions; required when production safeguards apply |
 | `TARGET_ENV_ID` | Environment ID declared in this file, checked against `GET /whoami` |
 
-Python uses the SDK names `POLY_API_BASE_URL` and `POLY_API_KEY`.
-Set `POLY_API_BASE_URL` to `https://eu1.polyapi.io`, `https://na1.polyapi.io`,
-`https://na2.polyapi.io`, or the base URL of another PolyAPI instance. The
-template has no fixed regional default. Use the API key and environment ID
-for that instance; set `POLY_TEST_WEBHOOK_URL` to its deployed webhook when
-running integration tests.
+Flow reuses the connection saved by `python -m polyapi setup` in this project's
+Python SDK. Neither connection value needs to be in the environment file.
+Explicit file values override shell values, which override saved setup, per
+field. Python supports `POLY_API_BASE_URL` / `POLY_API_KEY`, `BASE_URL` /
+`API_KEY`, and older `POLYAPI_*` aliases. If only one field is overridden, the
+other comes from the shell or saved setup. Empty explicit values do not fall
+back silently. The resolved pair also applies to native SDK calls and generation.
+
+An optional URL override can select `https://eu1.polyapi.io`,
+`https://na1.polyapi.io`, `https://na2.polyapi.io`, or another PolyAPI instance.
+There is no fixed regional default. Keep the matching `TARGET_ENV_ID` in the
+selected file; set `POLY_TEST_WEBHOOK_URL` to its deployed webhook when running
+integration tests.
 
 `TARGET_ENV_ID` must be declared in the selected environment file; exporting
 the pin only in your shell is insufficient.

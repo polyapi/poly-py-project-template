@@ -13,6 +13,12 @@ from typing import Any
 import yaml
 
 from cli import flow
+from cli.openapi_conversion import swagger_to_openapi
+from cli.openapi_preparation import (
+    clean_descriptions,
+    normalize_schema_names,
+    select_operations,
+)
 
 ENDPOINTS = {
     "api-functions": "/functions/api",
@@ -174,9 +180,9 @@ def order_schemas(schemas: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
     def visit(key: str) -> None:
         if key in active:
-            raise flow.DeployError(
-                "Model schemas have a dependency cycle; no resources were trained"
-            )
+            # Recursive JSON Schema references are valid. The platform accepts
+            # forward references; retain the contract instead of inventing placeholders.
+            return
         if key in visited:
             return
         active.add(key)
@@ -199,6 +205,7 @@ def validate_model(
         raise flow.DeployError(
             "Expected a Poly model with functions, schemas, or webhooks"
         )
+    model = clean_descriptions(model)
     result = {}
     for kind, (_, schema) in MODEL_TYPES.items():
         items = model.get(kind, [])
@@ -246,8 +253,27 @@ def train_openapi(
     overwrite_model: bool,
     disable_ai: bool = False,
     renames: list[list[str]] | None = None,
+    operation_ids: list[str] | None = None,
 ) -> None:
     rename_model({}, renames or [])
+    prepared = []
+    for path, context, text in specs:
+        document = yaml.safe_load(text)
+        if isinstance(document, dict):
+            document = normalize_schema_names(document)
+            try:
+                document = select_operations(document, operation_ids or [])
+            except ValueError as error:
+                raise flow.DeployError(str(error)) from None
+            try:
+                document = swagger_to_openapi(document)
+            except ValueError as error:
+                raise flow.DeployError(str(error)) from None
+            text = json.dumps(clean_descriptions(document))
+        elif operation_ids:
+            raise flow.DeployError("Operation selection requires an OpenAPI document")
+        prepared.append((path, context, text))
+    specs = prepared
     # Validate all input/output paths before any remote operation.
     outputs: set[Path] = set()
     for path, _, _ in specs:
@@ -498,6 +524,12 @@ def create_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Save translated models without training resources",
     )
+    training.add_argument(
+        "--operation-id",
+        action="append",
+        default=[],
+        help="Train only this original operationId; repeat for multiple operations",
+    )
     training.add_argument("--overwrite-model", action="store_true")
     training.add_argument("--skip-generate", action="store_true")
     training.add_argument(
@@ -582,6 +614,7 @@ def main(argv: list[str] | None = None) -> int:
                 overwrite_model=False,
                 disable_ai=args.disable_ai,
                 renames=args.rename,
+                operation_ids=args.operation_id,
             )
             return 0
     elif args.command == "train-model":
@@ -607,7 +640,8 @@ def main(argv: list[str] | None = None) -> int:
     api_key, base_url = flow.get_api_key_and_url()
     if not api_key or not base_url:
         raise flow.DeployError(
-            "Set POLY_API_KEY and POLY_API_BASE_URL for the selected target"
+            "Run `flow setup` or set POLY_API_KEY and POLY_API_BASE_URL overrides "
+            "for the selected target"
         )
     client = flow.PolyApiClient(
         base_url,
@@ -626,6 +660,7 @@ def main(argv: list[str] | None = None) -> int:
             overwrite_model=args.overwrite_model,
             disable_ai=args.disable_ai,
             renames=args.rename,
+            operation_ids=args.operation_id,
         )
     elif args.command == "train-model":
         assert model is not None
