@@ -576,10 +576,18 @@ invalid or duplicate final identities stop training.
 `--generate-only` saves translated `.poly.json` models for review without
 training resources. `train-model PATH` trains a saved model; `--dry-run` validates
 and previews it. Existing model files are preserved unless `--overwrite-model`
-is explicit. Schema dependencies are ordered before training; valid recursive references
-are retained, and cross-file identity collisions fail before resource upserts. A failed training
-request stops immediately, leaving saved models available for an idempotent
-retry. Use `--skip-generate` only when regenerating the SDK separately.
+is explicit. Schema dependencies are ordered before training, and cross-file
+identity collisions fail before resource upserts. A failed training request stops
+immediately, leaving saved models available for an idempotent retry.
+
+The pinned Python SDK cannot generate typed bindings for recursive schema
+references. Normal training rejects known schema cycles before any resource
+upsert. Use explicit `--skip-generate` with `train-openapi` or `train-model` to
+train recursive contracts unchanged without refreshing the SDK. The same guard
+applies to saved-model previews. `--generate-only` can export recursive models
+for review because it neither trains resources nor generates the SDK. Do not
+regenerate typed bindings for those cycles with the current SDK; resolve the SDK
+limitation or deliberately review a schema redesign first.
 
 Cleanup always previews metadata first. `--apply` requires typing `DELETE` in an
 interactive terminal. Every delete is followed by a 404 readback; an uncertain

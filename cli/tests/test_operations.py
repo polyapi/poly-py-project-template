@@ -529,3 +529,196 @@ def test_same_stem_specs_cannot_overwrite_each_others_models(config):
             disable_ai=True,
         )
     client.request.assert_not_called()
+
+
+def schema_training_model(graph):
+    model = api_model()
+    target = "Node" if graph == "self" else "Child"
+    model["schemas"] = [
+        {
+            "name": "Node",
+            "context": "example.demo",
+            "definition": {
+                "type": "object",
+                "properties": {
+                    "child": {"x-poly-ref": {"path": "example.demo." + target}}
+                },
+            },
+        }
+    ]
+    if graph != "self":
+        definition = (
+            {"x-poly-ref": {"path": "example.demo.Node"}}
+            if graph == "mutual"
+            else {"type": "string"}
+        )
+        model["schemas"].append(
+            {"name": "Child", "context": "example.demo", "definition": definition}
+        )
+    return model
+
+
+@pytest.fixture
+def training_cli(config, monkeypatch):
+    monkeypatch.setattr(flow, "find_repo_root", lambda: config.repo_root)
+    monkeypatch.setattr(flow, "load_env", lambda *_: object())
+    monkeypatch.setattr(flow, "build_config", lambda *_: config)
+    monkeypatch.setattr(flow, "get_target_env_id", lambda *_: "synthetic-target")
+    monkeypatch.setattr(flow, "build_deployment_preflight", lambda *_: object())
+    for name in (
+        "print_deployment_visibility",
+        "maybe_confirm_branch_env_file_match",
+        "enforce_production_safeguards",
+        "enforce_target_environment",
+    ):
+        monkeypatch.setattr(flow, name, Mock())
+    monkeypatch.setattr(flow, "get_execution_api_key", lambda: None)
+    monkeypatch.setattr(
+        flow,
+        "get_api_key_and_url",
+        lambda: ("synthetic-key", "https://example.invalid"),
+    )
+    client, generate = Mock(), Mock()
+    monkeypatch.setattr(flow, "PolyApiClient", lambda *args, **kwargs: client)
+    monkeypatch.setattr(flow, "run_poly_generate", generate)
+    return client, generate
+
+
+@pytest.mark.parametrize("command", ["train-openapi", "train-model"])
+@pytest.mark.parametrize("graph", ["self", "mutual", "acyclic"])
+@pytest.mark.parametrize("skip_generate", [False, True])
+def test_training_cli_blocks_cycles_before_upserts_unless_generation_skipped(
+    config, training_cli, command, graph, skip_generate
+):
+    client, generate = training_cli
+    model = schema_training_model(graph)
+    source = config.repo_root / "api.json"
+    if command == "train-model":
+        source.write_text(json.dumps(model))
+    else:
+        source.write_text(json.dumps({"openapi": "3.0.3", "paths": {"/node": {}}}))
+    client.request.side_effect = lambda method, *args, **kwargs: (
+        copy.deepcopy(model) if method == "POST" else {"id": "synthetic"}
+    )
+    argv = [command, str(source)]
+    if command == "train-openapi":
+        argv += ["--context", "example.demo", "--disable-ai"]
+    if skip_generate:
+        argv.append("--skip-generate")
+    if graph != "acyclic" and not skip_generate:
+        with pytest.raises(flow.DeployError, match="--skip-generate"):
+            operations.main(argv)
+        assert all(call.args[0] == "POST" for call in client.request.call_args_list)
+        generate.assert_not_called()
+    else:
+        assert operations.main(argv) == 0
+        upserts = [
+            call for call in client.request.call_args_list if call.args[0] == "PUT"
+        ]
+        assert len(upserts) == len(model["schemas"]) + len(model["functions"])
+        definitions = {item["name"]: item["definition"] for item in model["schemas"]}
+        assert {
+            call.kwargs["payload"]["name"]: call.kwargs["payload"]["definition"]
+            for call in upserts
+            if call.args[1] == "/schemas"
+        } == definitions
+        assert generate.call_count == (0 if skip_generate else 1)
+
+
+@pytest.mark.parametrize("skip_generate", [False, True])
+def test_saved_recursive_model_preview_is_offline_and_requires_explicit_opt_in(
+    config, training_cli, monkeypatch, skip_generate
+):
+    client, generate = training_cli
+    source = config.repo_root / "recursive.poly.json"
+    source.write_text(json.dumps(schema_training_model("self")))
+    monkeypatch.setattr(
+        flow,
+        "get_api_key_and_url",
+        Mock(side_effect=AssertionError("offline preview must not load credentials")),
+    )
+    argv = ["train-model", str(source), "--dry-run"]
+    if skip_generate:
+        assert operations.main([*argv, "--skip-generate"]) == 0
+    else:
+        with pytest.raises(flow.DeployError, match="--skip-generate"):
+            operations.main(argv)
+    client.request.assert_not_called()
+    generate.assert_not_called()
+
+
+@pytest.mark.parametrize("skip_generate", [False, True])
+def test_cross_file_schema_cycle_is_checked_before_any_upsert(config, skip_generate):
+    model = schema_training_model("mutual")
+    models = [{"schemas": [item]} for item in model["schemas"]]
+    client = Mock()
+    remaining = iter(models)
+    client.request.side_effect = lambda method, *args, **kwargs: (
+        copy.deepcopy(next(remaining)) if method == "POST" else {"id": "synthetic"}
+    )
+    specs = [
+        (config.repo_root / f"api{n}.json", "example.demo", "spec") for n in range(2)
+    ]
+    options = {"skip_generate": True} if skip_generate else {}
+    if skip_generate:
+        operations.train_openapi(
+            client,
+            specs,
+            config,
+            dry_run=False,
+            generate_only=False,
+            overwrite_model=False,
+            disable_ai=True,
+            **options,
+        )
+        assert [call.args[0] for call in client.request.call_args_list] == [
+            "POST",
+            "POST",
+            "PUT",
+            "PUT",
+        ]
+    else:
+        with pytest.raises(flow.DeployError, match="--skip-generate"):
+            operations.train_openapi(
+                client,
+                specs,
+                config,
+                dry_run=False,
+                generate_only=False,
+                overwrite_model=False,
+                disable_ai=True,
+                **options,
+            )
+        assert [call.args[0] for call in client.request.call_args_list] == [
+            "POST",
+            "POST",
+        ]
+
+
+def test_generate_only_can_export_recursive_contract_without_training(
+    config, training_cli
+):
+    client, generate = training_cli
+    model = schema_training_model("self")
+    source = config.repo_root / "api.json"
+    source.write_text(json.dumps({"openapi": "3.0.3", "paths": {"/node": {}}}))
+    client.request.return_value = model
+    assert (
+        operations.main(
+            [
+                "train-openapi",
+                str(source),
+                "--context",
+                "example.demo",
+                "--disable-ai",
+                "--generate-only",
+            ]
+        )
+        == 0
+    )
+    assert [call.args[0] for call in client.request.call_args_list] == ["POST"]
+    assert (
+        json.loads(source.with_suffix(".poly.json").read_text())["schemas"]
+        == model["schemas"]
+    )
+    generate.assert_not_called()
