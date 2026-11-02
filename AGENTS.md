@@ -15,7 +15,7 @@ local skill below for the behavior being implemented or reviewed.
 | Task | Start here |
 | --- | --- |
 | Webhooks, API calls, or secret injection | [Sample workflow](workflows/src/sample_workflow/OVERVIEW.md) |
-| AI tools and structured weather output | [Weather AI](workflows/src/sample_ai_fx/OVERVIEW.md) |
+| AI tools and structured weather output | [Weather AI](workflows/src/sample_workflow/OVERVIEW.md#weather-ai) |
 | Logging or error notifications | [Common utilities](workflows/src/utilities/common/OVERVIEW.md) |
 | Shell setup and editor/target selection | [Interactive setup](cli/README.md#interactive-setup), `cli/setup.py`, and `cli/shell/` |
 | New-project bootstrapping | [Getting started](README.md#getting-started), `kickstart/kickstart.sh`, `kickstart/kickstart.py`, and `kickstart/configure.py` |

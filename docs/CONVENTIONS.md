@@ -39,8 +39,9 @@ directories to reserve space.
 
 Keep general developer guides in `docs/`, including these conventions and
 [setup and development](SETUP.md). Keep the root README focused on getting
-started and finding examples. Workflow lessons stay in their same-folder
-`OVERVIEW.md`; repository-wide agent instructions stay in [AGENTS.md](../AGENTS.md).
+started and finding examples. Workflow onboarding starts in its same-folder
+`README.md`; runtime references and optional lessons stay in `OVERVIEW.md`.
+Repository-wide agent instructions stay in [AGENTS.md](../AGENTS.md).
 
 ## Naming
 

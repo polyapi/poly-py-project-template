@@ -631,7 +631,7 @@ def test_cancelled_optional_profile_keeps_successful_setup(monkeypatch, project)
     assert onboarding.read_state(project)["envpath"] == "workflows/dev.env"
 
 
-@pytest.mark.parametrize("shell", ["bash", "fish", "pwsh"])
+@pytest.mark.parametrize("shell", ["bash", "zsh", "fish", "pwsh"])
 def test_saved_profile_loads_function_in_fresh_shell(
     shell, monkeypatch, project, tmp_path
 ):
@@ -653,6 +653,16 @@ def test_saved_profile_loads_function_in_fresh_shell(
             "--norc",
             "-c",
             f"source '{profile}'; test \"$(type -t flow)\" = function",
+        ]
+    elif shell == "zsh":
+        monkeypatch.setenv("ZDOTDIR", str(tmp_path))
+        profile = tmp_path / ".zshrc"
+        onboarding.offer_profile(project, "zsh", None)
+        args = [
+            executable,
+            "-f",
+            "-c",
+            f"source '{profile}'; functions flow >/dev/null",
         ]
     elif shell == "fish":
         profile = tmp_path / "config/fish/conf.d/poly_flow.fish"

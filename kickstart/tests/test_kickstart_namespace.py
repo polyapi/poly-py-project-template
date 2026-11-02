@@ -107,12 +107,13 @@ def test_real_sample_guides_and_artefacts_stay_aligned(tmp_path, namespace):
         "docs/SETUP.md",
         "docs/CONVENTIONS.md",
         "cli/README.md",
+        "workflows/src/sample_workflow/README.md",
         "workflows/src/sample_workflow/OVERVIEW.md",
-        "workflows/src/sample_ai_fx/OVERVIEW.md",
         "workflows/src/utilities/common/OVERVIEW.md",
         "workflows/src/sample_workflow/client/motd_client_cfx.py",
         "workflows/src/sample_workflow/artefacts/vari/advice_api_config.json",
         "workflows/src/utilities/common/client/log_cfx.py",
+        "workflows/src/sample_workflow/artefacts/ai-functions/uplifting_weather.json",
     )
     for name in files:
         target = tmp_path / name
@@ -124,7 +125,7 @@ def test_real_sample_guides_and_artefacts_stay_aligned(tmp_path, namespace):
         if name.endswith(".py"):
             ast.parse(content)
             assert f'"{namespace}.' in content or f"'{namespace}." in content
-        if name.endswith("OVERVIEW.md"):
+        if name in files[4:7]:
             assert f"`{namespace}`" in content
             assert not re.search(
                 r"\bexample\.(sample_workflow|sample_ai_fx|utilities)", content
@@ -135,10 +136,15 @@ def test_real_sample_guides_and_artefacts_stay_aligned(tmp_path, namespace):
     motd = (tmp_path / files[4]).read_text()
     assert f"--context {namespace}.sample_workflow" in motd
     ai = (tmp_path / files[5]).read_text()
-    assert f"poly.{namespace}.sample_ai_fx.uplifting_weather_async" in ai
+    assert f"poly.{namespace}.sample_workflow.uplifting_weather_async" in ai
     utilities = (tmp_path / files[6]).read_text()
     assert f"poly.{namespace}.utilities.log" in utilities
     assert "OOB.polyapi.internal.alerting.sendAlertToPoly" in utilities
+    ai_definition = json.loads((tmp_path / files[-1]).read_text())
+    assert ai_definition["context"] == f"{namespace}.sample_workflow"
+    assert {tool["functionContext"] for tool in ai_definition["toolFunctions"]} == {
+        f"{namespace}.sample_workflow"
+    }
 
 
 def test_env_example_namespace_and_webhook_slug_are_personalized(tmp_path):

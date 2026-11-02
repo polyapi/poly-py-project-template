@@ -1,6 +1,6 @@
 {
   "name": "uplifting_weather",
-  "context": "example.sample_ai_fx",
+  "context": "example.sample_workflow",
   "description": "Returns accurate, practical, and encouraging weather guidance tailored to an optional activity.",
   "visibility": "ENVIRONMENT",
   "state": "ALPHA",
@@ -31,7 +31,7 @@
   "toolFunctions": [
     {
       "functionName": "searchLocations",
-      "functionContext": "example.sample_ai_fx",
+      "functionContext": "example.sample_workflow",
       "argumentConfig": [
         {
           "key": "name",
@@ -61,7 +61,7 @@
     },
     {
       "functionName": "getCurrentWeather",
-      "functionContext": "example.sample_ai_fx",
+      "functionContext": "example.sample_workflow",
       "argumentConfig": [
         {
           "key": "latitude",

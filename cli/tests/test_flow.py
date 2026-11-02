@@ -21,6 +21,13 @@ SPEC.loader.exec_module(poly_deploy)
 
 
 @pytest.fixture(autouse=True)
+def _reuse_installed_package_index(monkeypatch, cached_distribution_lookup):
+    monkeypatch.setattr(
+        poly_deploy, "packages_distributions", cached_distribution_lookup
+    )
+
+
+@pytest.fixture(autouse=True)
 def _restore_os_environ():
     """Undo env writes made by the code under test, not just by monkeypatch.
 

@@ -5,7 +5,7 @@ failures to an alert service. Start with an `info` message, inspect its output,
 then follow the optional alert path.
 
 Complete [Getting started](../../../../README.md#getting-started) first. The
-[message-of-the-day lesson](../../sample_workflow/OVERVIEW.md) introduces the SDK
+[message-of-the-day lesson](../../sample_workflow/README.md) introduces the SDK
 and deployment concepts used here. Run commands from the repository root.
 
 Coding-agent skills are optional. Kickstart installs them, and manual checkouts

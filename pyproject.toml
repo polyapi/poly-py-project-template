@@ -28,7 +28,7 @@ package = false
 target-version = ["py312"]
 
 [tool.pytest.ini_options]
-testpaths = ["cli/tests", "workflows/src"]
+testpaths = ["cli/tests", "kickstart/tests", "workflows/src"]
 pythonpath = ["."]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"

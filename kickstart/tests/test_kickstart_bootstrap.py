@@ -6,7 +6,9 @@ import os
 from pathlib import Path
 import select
 import signal
+import shutil
 import subprocess
+import sys
 import tarfile
 import time
 
@@ -17,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[2]
 ENTRY = ROOT / "kickstart/kickstart.sh"
 
 
-def run_piped_with_terminal(script, cwd, environment):
+def run_piped_with_terminal(script, cwd, environment, response=None):
     """Pipe the script to Bash while retaining an interactive controlling TTY."""
     read_fd, write_fd = os.pipe()
     child, terminal = pty.fork()
@@ -29,6 +31,7 @@ def run_piped_with_terminal(script, cwd, environment):
         os.execve("/bin/bash", ["bash"], environment)
     os.close(read_fd)
     output = bytearray()
+    responded = False
     try:
         with os.fdopen(write_fd, "wb") as stream:
             stream.write(script)
@@ -44,6 +47,16 @@ def run_piped_with_terminal(script, cwd, environment):
             if not chunk:
                 break
             output.extend(chunk)
+            if (
+                response
+                and not responded
+                and any(line.startswith(response[0]) for line in output.splitlines())
+            ):
+                if response[1] == "sigint":
+                    os.killpg(child, signal.SIGINT)
+                else:
+                    os.write(terminal, response[1])
+                responded = True
         else:
             raise AssertionError("Kickstart did not finish within ten seconds")
         _, status = os.waitpid(child, 0)
@@ -223,3 +236,168 @@ def test_public_snapshot_rejects_symlinks(tmp_path, monkeypatch):
     (source / "README.md").symlink_to(tmp_path / "outside.md")
     with pytest.raises(module.KickstartError, match="symlink"):
         module.copy_checkout(source, tmp_path / "project")
+
+
+SIGNAL_WORKER = r'''
+import importlib.util
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+repo = Path(os.environ["SIGNAL_REPO"])
+sys.path.insert(0, str(repo / "kickstart"))
+spec = importlib.util.spec_from_file_location("signal_kickstart", repo / "kickstart/kickstart.py")
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+folder = Path(os.environ["SIGNAL_FOLDER"])
+answers = iter(("signal-project", str(folder), "synthetic", "dev"))
+module.input = lambda prompt: next(answers)
+module.getpass.getpass = lambda prompt: "synthetic-key"
+module.shutil.which = lambda name: "/synthetic/" + name
+module.rename_project = lambda *args: None
+module.rewrite_namespace = lambda *args: None
+
+def copy_source(source, target):
+    (target / "workflows").mkdir()
+    (target / "workflows/dev.env.example").write_text("POLYAPI_NAMESPACE=example\nTARGET_ENV_ID=placeholder\n")
+
+module.copy_checkout = copy_source
+real_run = subprocess.run
+
+child_code = r"""
+import os
+from pathlib import Path
+import sys
+from types import SimpleNamespace
+sys.path.insert(0, os.environ["SIGNAL_REPO"])
+from kickstart import configure
+from cli import setup
+root = Path.cwd()
+identity = setup.Identity("Synthetic tenant", "Development", "synthetic-env")
+setup.fetch_identity = lambda *args: identity
+setup.choose_target = lambda *args: "workflows/dev.env"
+setup.save_target_configuration = lambda *args: None
+saved = (os.environ["POLY_API_KEY"], os.environ["POLY_API_BASE_URL"])
+configure.get_api_key_and_url = lambda: saved
+
+def sdk_setup(*args):
+    if os.environ["SIGNAL_STAGE"] == "sdk-setup":
+        print("SDK_SETUP_WAIT", flush=True)
+        input()
+
+setup.run_sdk_setup = sdk_setup
+
+def generate(*args, **kwargs):
+    if os.environ["SIGNAL_STAGE"] == "sdk-generation":
+        print("SDK_GENERATION_WAIT", flush=True)
+        input()
+    return SimpleNamespace(returncode=0)
+
+configure.subprocess.run = generate
+configure.configure(root)
+"""
+
+def controlled_run(command, **kwargs):
+    if command[:2] == ["git", "clone"]:
+        skills = Path(command[-1])
+        for category in ("general", "polyapi-common", "polyapi-python"):
+            (skills / category / "skills").mkdir(parents=True)
+        training = skills / "polyapi-python/skills/api-function-training"
+        training.mkdir()
+        (training / "SKILL.md").write_text("Synthetic training fixture\n")
+    elif command[-1:] == ["kickstart.configure"]:
+        return real_run([
+            os.environ["SIGNAL_UV"], "run", "--offline", "--no-project", "--no-config",
+            "--python", os.environ["SIGNAL_PYTHON"], "python", "-B", "-u", "-c", child_code
+        ], **kwargs)
+    elif command[:2] == ["git", "init"]:
+        (folder / "git-phase").touch()
+    elif command[0] == "code":
+        (folder / "editor-phase").touch()
+    return subprocess.CompletedProcess(command, 0)
+
+module.subprocess.run = controlled_run
+try:
+    raise SystemExit(module.main())
+except (KeyboardInterrupt, EOFError):
+    raise SystemExit(130)
+'''
+
+
+@pytest.mark.parametrize(
+    "stage, response, expected_status",
+    [
+        ("profile", "sigint", 0),
+        ("profile", b"\x04", 0),
+        ("profile", b"skip\n", 0),
+        ("sdk-setup", "sigint", 130),
+        ("sdk-generation", "sigint", 130),
+    ],
+)
+def test_terminal_cancellation_respects_optional_profile_boundary(
+    bootstrap_fixture, stage, response, expected_status
+):
+    """Use real Bash/uv/PTY signals; SDK, Git and provider operations are mocked."""
+    launch, downloads, environment = bootstrap_fixture
+    uv = shutil.which("uv")
+    if not uv:
+        pytest.skip("uv is not installed")
+    environment.update(
+        SIGNAL_REPO=str(ROOT),
+        SIGNAL_FOLDER=str(launch),
+        SIGNAL_STAGE=stage,
+        SIGNAL_UV=uv,
+        SIGNAL_PYTHON=sys.executable,
+        SHELL="/bin/bash",
+    )
+    with tarfile.open(environment["BOOTSTRAP_ARCHIVE"], "w:gz") as stream:
+        for name, data in {
+            "kickstart/kickstart.sh": ENTRY.read_bytes(),
+            "kickstart/kickstart.py": SIGNAL_WORKER.encode(),
+            ".python-version": (ROOT / ".python-version").read_bytes(),
+        }.items():
+            entry = tarfile.TarInfo("template-main/" + name)
+            entry.size = len(data)
+            stream.addfile(entry, io.BytesIO(data))
+    fake_uv = Path(environment["PATH"].split(":")[0]) / "uv"
+    fake_uv.write_text(
+        '#!/bin/sh\nexec "$SIGNAL_UV" run --offline --no-project --no-config '
+        '--python "$SIGNAL_PYTHON" python -B -u "$6"\n'
+    )
+    marker = {
+        "profile": b"Shell for optional flow shortcut",
+        "sdk-setup": b"SDK_SETUP_WAIT",
+        "sdk-generation": b"SDK_GENERATION_WAIT",
+    }[stage]
+    status, output = run_piped_with_terminal(
+        ENTRY.read_bytes(), launch, environment, response=(marker, response)
+    )
+    assert marker.decode() in output
+    assert status == expected_status, output
+    completed = stage == "profile"
+    assert (launch / "git-phase").exists() == completed
+    assert (launch / "editor-phase").exists() == completed
+    assert ("Project ready at" in output) == completed
+    assert list(downloads.iterdir()) == []
+
+
+def test_bootstrap_imports_without_sdk_dependencies():
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-S",
+            "-B",
+            "-c",
+            "import sys; sys.path.insert(0, sys.argv[1]); "
+            "import kickstart.kickstart; "
+            "assert 'polyapi' not in sys.modules; "
+            "assert 'dotenv' not in sys.modules; "
+            "assert 'requests' not in sys.modules",
+            str(ROOT),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr

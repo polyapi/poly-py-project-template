@@ -675,7 +675,7 @@ def test_sample_artefacts_resolve_using_the_sample_functions(
             {
                 "id": name,
                 "name": name,
-                "context": f"{sample_namespace}.sample_ai_fx",
+                "context": f"{sample_namespace}.sample_workflow",
             }
             for name in ("searchLocations", "getCurrentWeather")
         ]
@@ -978,7 +978,7 @@ def test_weather_dry_run_resolves_owned_tools_without_a_secret(
     args = replace(
         args,
         dry_run=True,
-        path_filters=(config.repo_root / "workflows/src/sample_ai_fx",),
+        path_filters=(config.repo_root / "workflows/src/sample_workflow",),
     )
     responses = {
         f"/functions/{kind}{suffix}": []
@@ -989,7 +989,7 @@ def test_weather_dry_run_resolves_owned_tools_without_a_secret(
     responses["/functions/api"] = [
         {
             "id": name,
-            "context": f"{sample_namespace}.sample_ai_fx",
+            "context": f"{sample_namespace}.sample_workflow",
             "name": name,
         }
         for name in ("searchLocations", "getCurrentWeather")

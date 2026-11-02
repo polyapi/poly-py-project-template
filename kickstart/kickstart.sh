@@ -27,6 +27,9 @@ bootstrap_public_template() (
   mkdir -- "$bootstrap_dir/template"
   tar -xzf "$bootstrap_dir/template.tar.gz" --strip-components=1 \
     -C "$bootstrap_dir/template"
+  # The running bootstrap owns Ctrl+C policy: SDK cancellation returns 130,
+  # while cancelling its optional profile prompt can finish successfully.
+  trap ':' INT
   bash "$bootstrap_dir/template/kickstart/kickstart.sh" <&3
 )
 

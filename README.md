@@ -6,7 +6,7 @@ Build, test, and deploy PolyAPI workflows with the native Python SDK. This Pytho
 3.12.12 workspace includes sample integrations, shared utilities, local tests,
 agent guidance, and Flow tooling for managing platform resources.
 
-New to PolyAPI? Start with the [message-of-the-day tutorial](workflows/src/sample_workflow/OVERVIEW.md),
+New to PolyAPI? Start with the [message-of-the-day tutorial](workflows/src/sample_workflow/README.md),
 then explore the [AI and shared utility samples](#learn-by-example). Each lesson
 walks through a working integration and explains the pieces as you use them.
 
@@ -33,10 +33,12 @@ namespace and verified target, updates starter contexts, SDK references, and tut
 generates the SDK, creates `main` and `develop`,
 and opens VS Code. It does not deploy resources or train the sample APIs.
 
-Kickstart does not add the `flow` shortcut to your shell. To use commands such
-as `flow self-update`, run `source cli/shell/flow.bash` (Bash or zsh) from the
-project root in each terminal, or [save the helper](docs/SETUP.md#existing-checkout-or-manual-setup)
-in your shell profile. The explicit `uv run` commands below work without it.
+After SDK generation, kickstart offers to save the `flow` helper for future
+Bash, zsh, Fish, or PowerShell terminals. Choose your shell and confirm the shown
+profile file before it writes anything; Enter at the save prompt declines.
+Skipping this step leaves setup complete. For your current terminal, load the
+[appropriate helper](docs/SETUP.md#existing-checkout-or-manual-setup), or use the
+explicit `uv run` commands below without it.
 
 Already have a checkout or need to change targets? Follow the
 [guided setup](docs/SETUP.md#existing-checkout-or-manual-setup).
@@ -48,8 +50,8 @@ results, and exercises, with deeper reference material below the walkthrough.
 
 | Sample | What you will learn |
 | --- | --- |
-| [Message of the day](workflows/src/sample_workflow/OVERVIEW.md) | Webhooks, triggers, server/client functions, trained APIs, Vari, secret injection, and a scheduled job. |
-| [Weather AI](workflows/src/sample_ai_fx/OVERVIEW.md) | AI tool calls, structured weather guidance, provider configuration, and data attribution. |
+| [Message of the day](workflows/src/sample_workflow/README.md) | Webhooks, triggers, server/client functions, trained APIs, Vari, secret injection, and a scheduled job. |
+| [Weather AI](workflows/src/sample_workflow/OVERVIEW.md#weather-ai) | AI tool calls, structured weather guidance, provider configuration, and data attribution. |
 | [Shared utilities](workflows/src/utilities/common/OVERVIEW.md) | Structured logging, recursive redaction, global error handling, and Slack alerts. |
 
 The weather sample uses Open-Meteo without a weather API key; AI execution still
@@ -71,7 +73,7 @@ uv run --locked python cli/flow.py --version
 make check
 uv run --locked pytest workflows/src/sample_workflow/tests/test_motd.py
 uv run --locked python cli/flow.py \
-  push-dynamic --paths sample_workflow --dry-run
+  push-dynamic --paths sample_workflow --types functions,variables,schemas,webhooks,triggers,jobs --dry-run
 ```
 
 Export your setup-selected path once per terminal session; Python Flow resolves
@@ -82,7 +84,7 @@ real environment files and secrets out of Git.
 
 Local checks need no API key and perform no deployment. Live tests require
 explicit opt-in; see [verification](docs/SETUP.md#verification) and the
-[sample deployment guide](workflows/src/sample_workflow/OVERVIEW.md#run-your-first-request).
+[sample deployment guide](workflows/src/sample_workflow/README.md#run-your-first-request).
 
 ## Structure
 

@@ -10,7 +10,10 @@ import sys
 import tempfile
 import tomllib
 
-from namespace import rewrite_namespace, valid_namespace
+# The bootstrap interpreter has no SDK dependencies; this helper uses stdlib only.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from cli import shell_profile  # noqa: E402
+from kickstart.namespace import rewrite_namespace, valid_namespace  # noqa: E402
 
 SKILLS_REPOSITORY = "https://github.com/polyapi/poly-skills.git"
 PRIVATE_DIRECTORIES = {
@@ -127,6 +130,20 @@ def subprocess_environment() -> dict[str, str]:
         environment.pop(name, None)
     environment["UV_PROJECT_ENVIRONMENT"] = ".venv"
     return environment
+
+
+def offer_optional_profile(root: Path) -> None:
+    try:
+        shell_profile.offer_shell_profile(root)
+    except (KeyboardInterrupt, EOFError):
+        print(
+            "\nOptional shell-profile registration skipped; continuing project setup."
+        )
+    except (OSError, UnicodeError):
+        print("Could not update the optional profile; continuing project setup.")
+    print(
+        "For this terminal, source cli/shell/flow.bash in Bash/zsh, or use the Fish/PowerShell loader."
+    )
 
 
 def main() -> int:
@@ -277,6 +294,7 @@ def main() -> int:
             environment.pop("POLY_API_KEY")
             environment.pop("POLY_API_BASE_URL")
             key = ""
+            offer_optional_profile(target)
             print("Initializing Git and switching to develop...", flush=True)
             subprocess.run(
                 ["git", "init", "-b", "main"], cwd=target, env=environment, check=True

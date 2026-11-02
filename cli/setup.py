@@ -11,7 +11,6 @@ from pathlib import Path
 import re
 import subprocess
 import sys
-import tempfile
 from urllib.parse import urlsplit
 
 from dotenv import dotenv_values
@@ -19,6 +18,7 @@ from dotenv.parser import parse_stream
 import requests
 
 from cli.environment import CONNECTION_ALIASES
+from cli.shell_profile import atomic_write, confirm, offer_profile
 
 ENV_PATHS = {"dev": "workflows/dev.env", "prod": "workflows/prod.env"}
 STATE_PATH = ".flow/setup.json"
@@ -41,16 +41,6 @@ class Identity:
             f"tenant {self.tenant_name!r}, environment {self.environment_name!r} "
             f"({self.environment_id})"
         )
-
-
-def confirm(message: str, default: bool = True) -> bool:
-    while True:
-        answer = input(f"{message} [{'Y/n' if default else 'y/N'}]: ").strip().lower()
-        if not answer:
-            return default
-        if answer in {"y", "yes", "n", "no"}:
-            return answer in {"y", "yes"}
-        print("Choose yes or no.")
 
 
 def suggest_environment(name: str) -> str:
@@ -84,19 +74,6 @@ def check_local_path(path: Path, root: Path) -> None:
             raise SetupError("Setup does not follow configuration symlinks.")
     if path.exists() and not path.is_file():
         raise SetupError("Expected a regular configuration file.")
-
-
-def atomic_write(path: Path, content: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
-    try:
-        with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as output:
-            output.write(content)
-            output.flush()
-            os.fsync(output.fileno())
-        os.replace(temporary, path)
-    finally:
-        Path(temporary).unlink(missing_ok=True)
 
 
 def read_state(root: Path) -> dict:
@@ -400,44 +377,6 @@ def vscode_settings(root: Path, envpath: str) -> str:
         additions = json.dumps(missing, indent=2)[1:-1].rstrip()
         text = text[:opening] + additions + ("," if values else "") + text[opening:]
     return text
-
-
-def offer_profile(root: Path, shell: str | None, profile: str | None) -> None:
-    if not shell:
-        return
-    suffix = {"bash": "bash", "fish": "fish", "powershell": "ps1"}[shell]
-    loader = root / "cli/shell" / f"flow.{suffix}"
-    if shell == "bash":
-        path = Path.home() / (
-            ".bash_profile" if sys.platform == "darwin" else ".bashrc"
-        )
-        import shlex
-
-        command = f"source {shlex.quote(str(loader))}"
-    elif shell == "fish":
-        path = (
-            Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config")))
-            / "fish/conf.d/poly_flow.fish"
-        )
-        command = (
-            "source '" + str(loader).replace("\\", "\\\\").replace("'", "\\'") + "'"
-        )
-    else:
-        if not profile:
-            return
-        path = Path(profile)
-        command = ". '" + str(loader).replace("'", "''") + "'"
-    marker = "# Python Flow shell loader"
-    if path.is_symlink():
-        print("Shell profile is a symlink; add the loader manually if desired.")
-        return
-    previous = path.read_text(encoding="utf-8-sig") if path.exists() else ""
-    if marker in previous:
-        print(f"Shell loader already registered in {path}; left unchanged.")
-        return
-    print(f"Optional shell profile: {path}\n{command}")
-    if confirm("Add this loader for future terminals?", default=False):
-        atomic_write(path, previous.rstrip() + f"\n\n{marker}\n{command}\n")
 
 
 def save_project_files(updates: dict[Path, str]) -> None:

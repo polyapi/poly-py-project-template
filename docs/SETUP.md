@@ -31,11 +31,11 @@ This creates and activates `.venv`, runs the Python SDK setup, verifies your
 tenant and environment, and asks you to confirm **dev or prod**. It configures
 the selected env file and VS Code, and offers to save `flow` for future terminals.
 
-Next, follow the [sample workflow setup](../workflows/src/sample_workflow/OVERVIEW.md#run-your-first-request)
+Next, follow the [sample workflow setup](../workflows/src/sample_workflow/README.md#run-your-first-request)
 to train its APIs and configure its secrets, then preview deployment:
 
 ```bash
-flow push-dynamic --paths sample_workflow --dry-run
+flow push-dynamic --paths sample_workflow --types functions,variables,schemas,webhooks,triggers,jobs --dry-run
 ```
 
 See [guided setup details](#guided-setup-with-flow) for target changes, existing
@@ -128,7 +128,7 @@ To keep the learning samples in your repository without deploying them during
 normal project pushes, add this setting to the selected Flow environment file:
 
 ```env
-POLY_DEPLOY_SKIP_PATHS=workflows/src/sample_workflow,workflows/src/sample_ai_fx
+POLY_DEPLOY_SKIP_PATHS=workflows/src/sample_workflow
 ```
 
 This is a comma-separated list of file or directory paths relative to the
@@ -161,14 +161,13 @@ cli/                         Python Flow and its regression tests
 kickstart/                   Interactive project bootstrap
 designs/examples/            Canopy and subscription starter JSON
 workflows/src/
-  sample_workflow/           Message-of-the-day webhook workflow
-  sample_ai_fx/              Weather AI with no-key weather tools
+  sample_workflow/           Message-of-the-day webhook and optional weather AI
   utilities/common/         Logging and global error notifications
 pyproject.toml               Runtime and development dependencies
 uv.lock                     Reproducible dependency versions
 ```
 
-Start with the [sample workflow](../workflows/src/sample_workflow/OVERVIEW.md).
+Start with the [sample workflow](../workflows/src/sample_workflow/README.md).
 See [CONVENTIONS.md](CONVENTIONS.md) for layout and generated SDK rules, and
 [cli/README.md](../cli/README.md) for Flow's resource formats and safeguards.
 
@@ -214,6 +213,21 @@ contexts, SDK references, and code examples in the copied docs, verifies your
 target, and generates the SDK.
 Confirm whether to use `dev.env` or `prod.env`; the verified `TARGET_ENV_ID` is
 saved automatically. The URL/key stay in native SDK setup.
+
+After SDK generation, kickstart asks which shell should have the `flow` shortcut.
+The login-shell value is only a suggested answer; choose Bash, zsh, Fish,
+PowerShell, or `skip`. It reuses `flow setup`'s profile writer, shows the exact
+profile path and loader command, and asks for confirmation (default **No**).
+For PowerShell, provide the path reported by `$PROFILE.CurrentUserAllHosts`;
+leaving that path blank skips registration. zsh uses `$ZDOTDIR/.zshrc` when set,
+or `~/.zshrc`. Existing registrations are preserved.
+
+Skipping, cancelling, or failing to save this optional profile step does not
+undo successful project configuration. Ctrl+C at the optional prompt skips it;
+Ctrl+C during SDK setup or generation still cancels kickstart. The loader applies
+to future terminals;
+load the helper manually in the current terminal if needed. It does not change
+shell execution policies or replace an existing `flow` command.
 
 It then creates `main` with an initial commit, switches to `develop`, and opens
 VS Code. The [curl command](../README.md#getting-started) downloads a temporary
@@ -340,7 +354,7 @@ integration tests.
 Keep a separate environment file for each target and
 [export `ENVPATH` once](#select-an-environment-once) to select it.
 Regenerate the Python SDK against the selected target before using its generated
-functions; see the [sample's SDK generation command](../workflows/src/sample_workflow/OVERVIEW.md#run-your-first-request).
+functions; see the [sample's SDK generation command](../workflows/src/sample_workflow/OVERVIEW.md#training-and-sdk-reference).
 
 For multiple owned roots, `POLYAPI_NAMESPACES=example,second` takes precedence.
 
@@ -381,6 +395,10 @@ and Flow's resume state are ignored by Git.
 
 ## Verification
 
+Kickstart tests live under `kickstart/tests`; Flow CLI tests live under
+`cli/tests`. Both run with `make check`. CLI-only self-updates leave the project
+bootstrap and its tests together, preserving their version boundary.
+
 [CI](../.github/workflows/ci.yml) runs on pushes, pull requests, and manual dispatch.
 It installs Python 3.12.12 and locked dependencies, then runs `make check` for
 formatting, lint, and local tests. Live integration tests are explicitly disabled;
@@ -390,6 +408,7 @@ CI needs no PolyAPI credentials and performs no deployments.
 make check
 make format
 uv run --locked pytest cli/tests
+uv run --locked pytest kickstart/tests
 uv run --locked pytest workflows/src/sample_workflow/tests/test_motd.py
 ```
 
