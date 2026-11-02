@@ -19,7 +19,7 @@ pytestmark = [
 async def test_deployed_weather_guidance():
     from polyapi import poly
 
-    result = await poly.example.sample_ai_fx.uplifting_weather_async(
+    result = await poly.example.sample_workflow.uplifting_weather_async(
         "London, United Kingdom", "an outdoor walk"
     )
     artifact = json.loads(

@@ -10,7 +10,7 @@ ARTEFACTS = Path(__file__).resolve().parents[1] / "artefacts"
 AI = json.loads((ARTEFACTS / "ai-functions/uplifting_weather.json").read_text())
 SPECS = [
     json.loads(path.read_text())
-    for path in (ARTEFACTS / "specs").glob("*.json")
+    for path in (ARTEFACTS / "specs/weather").glob("*.json")
     if not path.name.endswith(".poly.json")
 ]
 

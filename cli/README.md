@@ -358,10 +358,10 @@ Do not put resolved secrets in artefact files.
 
 ## AI functions
 
-See `workflows/src/sample_ai_fx/artefacts/ai-functions/uplifting_weather.json`.
+See `workflows/src/sample_workflow/artefacts/ai-functions/uplifting_weather.json`.
 The enabled weather AI example uses two Open-Meteo API tools trained from its
 bundled specifications. It needs no weather account, API key, or trial for
-evaluation. Follow [the weather setup](../workflows/src/sample_ai_fx/OVERVIEW.md)
+evaluation. Follow [the weather setup](../workflows/src/sample_workflow/OVERVIEW.md)
 to train those tools in the project namespace before deploying the AI function.
 The target still needs the selected AI model/provider. Generic variable-backed
 tool arguments remain supported as shown below.
@@ -489,9 +489,9 @@ generated clients use the pinned `polyapi-python` SDK.
 
 ```bash
 # Local input preview; no provider requests.
-ENVPATH=workflows/dev.env uv run --locked python -m cli.operations train-openapi workflows/src/sample_workflow/artefacts/specs --context example.sample_workflow --dry-run
+ENVPATH=workflows/dev.env uv run --locked python -m cli.operations train-openapi workflows/src/sample_workflow/artefacts/specs/motd --context example.sample_workflow --dry-run
 # Translate, enrich with AI, save models, train, and regenerate the Python SDK.
-ENVPATH=workflows/dev.env uv run --locked python -m cli.operations train-openapi workflows/src/sample_workflow/artefacts/specs --context example.sample_workflow
+ENVPATH=workflows/dev.env uv run --locked python -m cli.operations train-openapi workflows/src/sample_workflow/artefacts/specs/motd --context example.sample_workflow
 # Preview cleanup in this exact context. Add --include-children for descendants.
 ENVPATH=workflows/dev.env uv run --locked python -m cli.operations delete-content --context example.sample_workflow --types api-functions,variables
 # Retrieve a single log page from an explicitly selected server function.

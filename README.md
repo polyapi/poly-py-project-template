@@ -30,11 +30,11 @@ This creates and activates `.venv`, runs the Python SDK setup, verifies your
 tenant and environment, and asks you to confirm **dev or prod**. It configures
 the selected env file and VS Code, and offers to save `flow` for future terminals.
 
-Next, follow the [sample workflow setup](workflows/src/sample_workflow/OVERVIEW.md#training-and-configuration)
+Next, follow the [step-by-step onboarding tutorial](workflows/src/sample_workflow/README.md)
 to train its APIs and configure its secrets, then preview deployment:
 
 ```bash
-flow push-dynamic --paths sample_workflow --dry-run
+flow push-dynamic --paths sample_workflow --types functions,variables,schemas,webhooks,triggers,jobs --dry-run
 ```
 
 See [guided setup details](#guided-setup-with-flow) for target changes, existing
@@ -49,14 +49,13 @@ AGENTS.md                   Coding-agent navigation and instructions
 cli/                         Python Flow and its regression tests
 designs/examples/            Canopy and subscription starter JSON
 workflows/src/
-  sample_workflow/           Message-of-the-day webhook workflow
-  sample_ai_fx/              Weather AI with no-key weather tools
+  sample_workflow/           Message-of-the-day webhook and optional weather AI
   utilities/common/         Logging and global error notifications
 pyproject.toml               Runtime and development dependencies
 uv.lock                     Reproducible dependency versions
 ```
 
-Start with the [sample workflow](workflows/src/sample_workflow/OVERVIEW.md).
+Start with the [sample workflow tutorial](workflows/src/sample_workflow/README.md).
 See [CONVENTIONS.md](CONVENTIONS.md) for layout and generated SDK rules, and
 [cli/README.md](cli/README.md) for Flow's resource formats and safeguards.
 
@@ -236,8 +235,8 @@ on `main` use production safeguards.
 ```bash
 git switch -c develop
 git switch -c feature/my-workflow
-ENVPATH=workflows/dev.env uv run --locked python cli/flow.py push-dynamic --paths sample_workflow --dry-run
-ENVPATH=workflows/dev.env uv run --locked python cli/flow.py push-dynamic --paths sample_workflow
+ENVPATH=workflows/dev.env uv run --locked python cli/flow.py push-dynamic --paths sample_workflow --types functions,variables,schemas,webhooks,triggers,jobs --dry-run
+ENVPATH=workflows/dev.env uv run --locked python cli/flow.py push-dynamic --paths sample_workflow --types functions,variables,schemas,webhooks,triggers,jobs
 ```
 
 Review the dry-run target and expanded dependency plan before running without
@@ -252,7 +251,7 @@ uv run --locked --env-file workflows/dev.env python -m polyapi generate
 ```
 
 A full push also includes common utilities and the enabled weather AI function.
-Train its bundled Open-Meteo specs using the [weather setup](workflows/src/sample_ai_fx/OVERVIEW.md),
+Train its bundled Open-Meteo specs using the [weather setup](workflows/src/sample_workflow/OVERVIEW.md#weather-ai),
 and configure the AI provider/model and utility log/channel settings before
 invoking them. The weather API needs no account, key, or trial for evaluation;
 AI execution can still incur model-provider usage. The global error notification
