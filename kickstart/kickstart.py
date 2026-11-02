@@ -367,24 +367,34 @@ def main() -> int:
         try:
             copy_checkout(source, target)
             rename_project(target, name)
-            for category in categories:
-                if any(
-                    file.is_symlink()
-                    for file in (skills / category / "skills").rglob("*")
-                ):
-                    raise KickstartError(
-                        "Skills must contain regular files, not symlinks."
-                    )
-                shutil.copytree(
-                    skills / category / "skills",
-                    target / ".agents/skills",
-                    dirs_exist_ok=True,
-                    ignore=lambda folder, names: [
-                        name
-                        for name in names
-                        if not copyable(Path(folder).relative_to(skills) / name)
-                    ],
-                )
+            rewrite_namespace(target, namespace)
+            print("Installing pinned Python dependencies...", flush=True)
+            subprocess.run(
+                ["uv", "sync", "--locked"], cwd=target, env=environment, check=True
+            )
+            print("Installing agent skills...", flush=True)
+            # Install from the checkout fetched above. Flow records the setup and
+            # revision in .agents/flow-skills.json for `flow skills update`; --yes
+            # replaces the template's bundled copies with the poly-skills versions.
+            subprocess.run(
+                [
+                    "uv",
+                    "run",
+                    "--locked",
+                    "--no-sync",
+                    "python",
+                    "cli/flow.py",
+                    "skills",
+                    "add",
+                    "python",
+                    "--yes",
+                    "--source",
+                    str(skills),
+                ],
+                cwd=target,
+                env=environment,
+                check=True,
+            )
             installed_training_skill = (
                 target / ".agents/skills/api-function-training/SKILL.md"
             )
@@ -395,11 +405,6 @@ def main() -> int:
                 raise KickstartError(
                     "Could not install the API Function Training skill."
                 )
-            rewrite_namespace(target, namespace)
-            print("Installing pinned Python dependencies...", flush=True)
-            subprocess.run(
-                ["uv", "sync", "--locked"], cwd=target, env=environment, check=True
-            )
             subprocess.run(
                 ["uv", "run", "--locked", "--no-sync", "black", "workflows/src"],
                 cwd=target,

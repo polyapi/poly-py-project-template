@@ -103,6 +103,11 @@ and the common [generate-overview skill](https://github.com/polyapi/poly-skills/
 maintained in `poly-skills`. Keep those package names and copy their supporting
 references when refreshing reviewed updates.
 
+`flow skills add python` installs the complete Coding in Python setup from
+`poly-skills` and records it in `.agents/flow-skills.json`; `flow skills update`
+refreshes it. Flow asks before replacing folders it did not install, including
+these bundled copies. See [agent skills](cli/README.md#agent-skills).
+
 Keep this template's paths, SDK pin, commands, and deployment safeguards in this
 file and [CONVENTIONS.md](docs/CONVENTIONS.md). Check shared guidance against the
 current implementation before applying an update.

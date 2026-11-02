@@ -213,7 +213,8 @@ terminal directory), namespace (default `demo`), a hidden API key, and region
 (`dev`, `na1`, `na2`, or `eu1`). Relative parent paths resolve from your current
 terminal directory.
 It installs the pinned Python dependencies and Python skills (including the
-dedicated `api-function-training` skill), updates starter
+dedicated `api-function-training` skill, recorded for `flow skills update`),
+updates starter
 contexts, SDK references, and code examples in the copied docs, verifies your
 target, and generates the SDK.
 Confirm whether to use `dev.env` or `prod.env`; the verified `TARGET_ENV_ID` is
@@ -488,8 +489,11 @@ the relevant workflow context, explains Python SDK and deployment boundaries,
 and provides validation commands. Workflow overviews describe their contracts
 and setup. Five bundled skills from [poly-skills](https://github.com/polyapi/poly-skills)
 cover SDK usage, artefacts, coding conventions, coding standards, and overview
-maintenance; see the [skill index](../AGENTS.md#agent-skills). Keep complete skill
-folders, including their references, when refreshing reviewed shared updates.
+maintenance; see the [skill index](../AGENTS.md#agent-skills). Install the full
+Python setup with `flow skills add python` and refresh it with
+`flow skills update`; see [agent skills](../cli/README.md#agent-skills). Keep
+complete skill folders, including their references, when refreshing reviewed
+shared updates.
 They are Markdown guidance and need no AI provider credentials or extra runtime
 dependencies.
 
