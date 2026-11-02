@@ -12,25 +12,33 @@ walks through a working integration and explains the pieces as you use them.
 
 ## Getting started
 
-Requires [uv](https://docs.astral.sh/uv/), Git, GitHub SSH access to the template
-and skills repositories, and the VS Code `code` command (on macOS, run
+Requires [uv](https://docs.astral.sh/uv/), curl, tar, Git, and the VS Code `code`
+command (on macOS, run
 **Shell Command: Install 'code' command in PATH** from the VS Code command
-palette). Node.js and GitHub CLI (`gh`) are not required.
+palette). GitHub authentication, Node.js, and GitHub CLI (`gh`) are not required.
 
 ```bash
-git clone git@github.com:polyapi/poly-py-project-template.git && \
-  ./poly-py-project-template/kickstart/kickstart.sh
+curl -fsSL https://raw.githubusercontent.com/polyapi/poly-py-project-template/main/kickstart/kickstart.sh | bash
 ```
+
+Kickstart downloads the public template into a temporary directory and fetches
+skills with a shallow HTTPS Git clone. You do not need to clone the template
+first. From an existing template checkout, `bash kickstart/kickstart.sh` also works.
+
+The parent directory defaults to your current terminal directory. Your project
+is created inside it using the project name you enter.
 
 Follow the prompts. Kickstart installs dependencies and skills, configures your
 namespace and verified target, updates starter contexts, SDK references, and tutorial examples,
 generates the SDK, creates `main` and `develop`,
 and opens VS Code. It does not deploy resources or train the sample APIs.
 
-Kickstart does not add the `flow` shortcut to your shell. To use commands such
-as `flow self-update`, run `source cli/shell/flow.bash` (Bash or zsh) from the
-project root in each terminal, or [save the helper](docs/SETUP.md#existing-checkout-or-manual-setup)
-in your shell profile. The explicit `uv run` commands below work without it.
+After SDK generation, kickstart offers to save the `flow` helper for future
+Bash, zsh, Fish, or PowerShell terminals. Choose your shell and confirm the shown
+profile file before it writes anything; Enter at the save prompt declines.
+Skipping this step leaves setup complete. For your current terminal, load the
+[appropriate helper](docs/SETUP.md#existing-checkout-or-manual-setup), or use the
+explicit `uv run` commands below without it.
 
 Already have a checkout or need to change targets? Follow the
 [guided setup](docs/SETUP.md#existing-checkout-or-manual-setup).

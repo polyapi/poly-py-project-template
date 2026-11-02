@@ -1,4 +1,4 @@
-"""Interactive bootstrap from the current template checkout; no gh required."""
+"""Interactive bootstrap from a checkout or public snapshot; no gh required."""
 
 import getpass
 import os
@@ -10,9 +10,12 @@ import sys
 import tempfile
 import tomllib
 
-from namespace import rewrite_namespace, valid_namespace
+# The bootstrap interpreter has no SDK dependencies; this helper uses stdlib only.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from cli import shell_profile  # noqa: E402
+from kickstart.namespace import rewrite_namespace, valid_namespace  # noqa: E402
 
-SKILLS_REPOSITORY = "git@github.com:polyapi/poly-skills.git"
+SKILLS_REPOSITORY = "https://github.com/polyapi/poly-skills.git"
 PRIVATE_DIRECTORIES = {
     ".git",
     ".venv",
@@ -52,24 +55,28 @@ def copyable(relative: Path) -> bool:
 
 
 def copy_checkout(source: Path, target: Path) -> None:
-    # Include pending source changes, unlike git archive HEAD. Git excludes
-    # ignored local files; the explicit filter also rejects tracked secrets.
-    paths = (
-        subprocess.check_output(
-            [
-                "git",
-                "-C",
-                str(source),
-                "ls-files",
-                "--cached",
-                "--others",
-                "--exclude-standard",
-                "-z",
-            ]
+    if (source / ".git").exists():
+        # Include pending changes in a local checkout, excluding ignored files.
+        paths = (
+            subprocess.check_output(
+                [
+                    "git",
+                    "-C",
+                    str(source),
+                    "ls-files",
+                    "--cached",
+                    "--others",
+                    "--exclude-standard",
+                    "-z",
+                ]
+            )
+            .decode()
+            .split("\0")
         )
-        .decode()
-        .split("\0")
-    )
+    else:
+        # A public GitHub snapshot has no Git metadata. Apply the same private
+        # file filter below before copying any source file.
+        paths = [str(file.relative_to(source)) for file in source.rglob("*")]
     for name in sorted(set(filter(None, paths))):
         relative = Path(name)
         if relative.is_absolute() or ".." in relative.parts or not copyable(relative):
@@ -79,7 +86,7 @@ def copy_checkout(source: Path, target: Path) -> None:
             item.is_symlink() for item in (file, *file.parents) if item != source.parent
         ):
             raise KickstartError(
-                "Template source contains a symlink; use a regular Git checkout."
+                "Template source contains a symlink; use regular source files."
             )
         if not file.is_file():
             continue  # A tracked file may have been deleted in the working tree.
@@ -125,6 +132,20 @@ def subprocess_environment() -> dict[str, str]:
     return environment
 
 
+def offer_optional_profile(root: Path) -> None:
+    try:
+        shell_profile.offer_shell_profile(root)
+    except (KeyboardInterrupt, EOFError):
+        print(
+            "\nOptional shell-profile registration skipped; continuing project setup."
+        )
+    except (OSError, UnicodeError):
+        print("Could not update the optional profile; continuing project setup.")
+    print(
+        "For this terminal, source cli/shell/flow.bash in Bash/zsh, or use the Fish/PowerShell loader."
+    )
+
+
 def main() -> int:
     if not sys.stdin.isatty():
         raise KickstartError("Run kickstart from an interactive terminal.")
@@ -139,7 +160,7 @@ def main() -> int:
         print(
             "Use lowercase letters, numbers, dots, underscores or hyphens; start and end with a letter or number."
         )
-    default_parent = Path.home() / "Code/poly"
+    default_parent = Path.cwd()
     while True:
         parent = (
             Path(
@@ -273,6 +294,7 @@ def main() -> int:
             environment.pop("POLY_API_KEY")
             environment.pop("POLY_API_BASE_URL")
             key = ""
+            offer_optional_profile(target)
             print("Initializing Git and switching to develop...", flush=True)
             subprocess.run(
                 ["git", "init", "-b", "main"], cwd=target, env=environment, check=True

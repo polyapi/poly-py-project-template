@@ -203,9 +203,10 @@ overrides, AI enrichment, and validation flags.
 
 ## Kickstart details
 
-Kickstart asks for the project name, parent directory (default `~/Code/poly`),
-namespace (default `demo`), a hidden API key, and region (`dev`, `na1`, `na2`,
-or `eu1`). Relative parent paths resolve from your current terminal directory.
+Kickstart asks for the project name, parent directory (defaulting to your current
+terminal directory), namespace (default `demo`), a hidden API key, and region
+(`dev`, `na1`, `na2`, or `eu1`). Relative parent paths resolve from your current
+terminal directory.
 It installs the pinned Python dependencies and Python skills (including the
 dedicated `api-function-training` skill), updates starter
 contexts, SDK references, and code examples in the copied docs, verifies your
@@ -213,10 +214,30 @@ target, and generates the SDK.
 Confirm whether to use `dev.env` or `prod.env`; the verified `TARGET_ENV_ID` is
 saved automatically. The URL/key stay in native SDK setup.
 
+After SDK generation, kickstart asks which shell should have the `flow` shortcut.
+The login-shell value is only a suggested answer; choose Bash, zsh, Fish,
+PowerShell, or `skip`. It reuses `flow setup`'s profile writer, shows the exact
+profile path and loader command, and asks for confirmation (default **No**).
+For PowerShell, provide the path reported by `$PROFILE.CurrentUserAllHosts`;
+leaving that path blank skips registration. zsh uses `$ZDOTDIR/.zshrc` when set,
+or `~/.zshrc`. Existing registrations are preserved.
+
+Skipping, cancelling, or failing to save this optional profile step does not
+undo successful project configuration. Ctrl+C at the optional prompt skips it;
+Ctrl+C during SDK setup or generation still cancels kickstart. The loader applies
+to future terminals;
+load the helper manually in the current terminal if needed. It does not change
+shell execution policies or replace an existing `flow` command.
+
 It then creates `main` with an initial commit, switches to `develop`, and opens
-VS Code. The current template checkout, including pending source changes, is
-copied; ignored local configuration and credential files are excluded.
-Kickstart does not deploy resources or train the sample APIs.
+VS Code. The [curl command](../README.md#getting-started) downloads a temporary
+public template snapshot; skills use a shallow HTTPS Git clone. No GitHub
+authentication is needed. The downloaded snapshot is removed after setup.
+
+You can also run `bash kickstart/kickstart.sh` from an existing template
+checkout; that path includes pending source changes. Local configuration and
+credential files are excluded from the new project. Kickstart does not deploy
+resources or train the sample APIs.
 The training skill must be available on `poly-skills/main`; setup stops with a
 clear message if it is missing.
 
@@ -374,6 +395,10 @@ and Flow's resume state are ignored by Git.
 
 ## Verification
 
+Kickstart tests live under `kickstart/tests`; Flow CLI tests live under
+`cli/tests`. Both run with `make check`. CLI-only self-updates leave the project
+bootstrap and its tests together, preserving their version boundary.
+
 [CI](../.github/workflows/ci.yml) runs on pushes, pull requests, and manual dispatch.
 It installs Python 3.12.12 and locked dependencies, then runs `make check` for
 formatting, lint, and local tests. Live integration tests are explicitly disabled;
@@ -383,6 +408,7 @@ CI needs no PolyAPI credentials and performs no deployments.
 make check
 make format
 uv run --locked pytest cli/tests
+uv run --locked pytest kickstart/tests
 uv run --locked pytest workflows/src/sample_workflow/tests/test_motd.py
 ```
 

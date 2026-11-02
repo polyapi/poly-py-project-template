@@ -4,12 +4,12 @@ install:
 	uv sync --locked
 
 check:
-	uv run --locked black --check cli workflows conftest.py .githooks/pre-commit
-	uv run --locked flake8 cli workflows conftest.py .githooks/pre-commit
+	uv run --locked black --check cli workflows kickstart/tests conftest.py .githooks/pre-commit
+	uv run --locked flake8 cli workflows kickstart/tests conftest.py .githooks/pre-commit
 	uv run --locked pytest
 
 format:
-	uv run --locked black cli workflows conftest.py .githooks/pre-commit
+	uv run --locked black cli workflows kickstart/tests conftest.py .githooks/pre-commit
 
 test:
 	uv run --locked pytest

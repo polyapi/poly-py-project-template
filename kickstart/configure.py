@@ -60,9 +60,6 @@ def configure(root: Path) -> None:
     subprocess.run([sys.executable, "-m", "polyapi", "generate"], cwd=root, check=True)
     print(f"Configured {identity.label}. TARGET_ENV_ID saved in {envpath}.")
     print("VS Code will use .venv and the selected environment file.")
-    print(
-        "For the flow command, source cli/shell/flow.bash in Bash/zsh, or use the Fish/PowerShell loader."
-    )
 
 
 if __name__ == "__main__":
