@@ -50,10 +50,15 @@ def configure(root: Path) -> None:
         "SLACK_CHANNEL_ID": "alerts-demos",
         "TARGET_ENV_ID": identity.environment_id,
         "POLY_TEST_WEBHOOK_URL": None,
-        "POLY_EXEC_API_KEY": "",
+        "POLY_EXEC_API_KEY": None if envpath == "workflows/dev.env" else "",
     }
     settings.update({name: None for names in CONNECTION_ALIASES for name in names})
     example = setup.update_dotenv(example, settings)
+    if envpath == "workflows/dev.env":
+        example += (
+            "\n# Optional but recommended in development; required when production safeguards apply.\n"
+            "# POLY_EXEC_API_KEY=replace-with-your-execution-key\n"
+        )
     setup.atomic_write(root / envpath, example)
     setup.save_target_configuration(root, envpath, identity, key, url)
     print("Generating PolyAPI Python SDK...", flush=True)

@@ -378,7 +378,8 @@ Dry runs resolve references to local resources planned in the same push, so a
 first deployment can be previewed before those resources have remote IDs.
 
 `POLY_EXEC_API_KEY` supplies the execution key sent with server-function
-deployments as `executionApiKey`. It can be set in any environment.
+deployments as `executionApiKey`. It is optional but recommended in development;
+kickstart leaves its example commented out in `dev.env`.
 Production-sensitive real pushes require it and interactive `PROD` confirmation.
 `POLY_API_KEY` authenticates deployment requests. Dry runs do not write remote
 resources.

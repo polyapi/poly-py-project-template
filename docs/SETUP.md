@@ -214,6 +214,11 @@ target, and generates the SDK.
 Confirm whether to use `dev.env` or `prod.env`; the verified `TARGET_ENV_ID` is
 saved automatically. The URL/key stay in native SDK setup.
 
+In `dev.env`, kickstart includes a commented `POLY_EXEC_API_KEY` example.
+It is optional but recommended in development. Uncomment it and replace the
+placeholder to attach an execution key to deployed server functions; it is
+required when production safeguards apply.
+
 After SDK generation, kickstart asks which shell should have the `flow` shortcut.
 The login-shell value is only a suggested answer; choose Bash, zsh, Fish,
 PowerShell, or `skip`. It reuses `flow setup`'s profile writer, shows the exact
