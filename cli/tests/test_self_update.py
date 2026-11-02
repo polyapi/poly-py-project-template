@@ -446,7 +446,19 @@ def test_invalid_ref_and_noninteractive_confirmation_leave_project_unchanged(
     assert not (project / ".flow").exists()
 
 
-def test_updated_cli_collects_without_importing_unmanaged_kickstart(tmp_path):
+@pytest.mark.parametrize(
+    "selection",
+    [
+        ("--collect-only", "cli/tests"),
+        (
+            "cli/tests/test_flow.py::test_strip_json_comments_keeps_strings",
+            "cli/tests/test_dynamic_functions.py::test_native_sdk_nested_payloads_and_deployment_order",
+        ),
+    ],
+)
+def test_updated_cli_collects_without_importing_unmanaged_kickstart(
+    tmp_path, selection
+):
     """CLI-only updates must not require a matching project bootstrap version."""
     updater.copy_source(ROOT / "cli", tmp_path / "cli", updater.inventory(ROOT / "cli"))
     (tmp_path / "pyproject.toml").write_text(MANIFEST)
@@ -460,11 +472,10 @@ def test_updated_cli_collects_without_importing_unmanaged_kickstart(tmp_path):
             "-B",
             "-m",
             "pytest",
-            "--collect-only",
             "-q",
             "-p",
             "no:cacheprovider",
-            "cli/tests",
+            *selection,
         ],
         cwd=tmp_path,
         capture_output=True,

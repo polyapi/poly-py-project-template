@@ -10,6 +10,11 @@ import pytest
 from cli import flow
 
 
+@pytest.fixture(autouse=True)
+def _reuse_installed_package_index(monkeypatch, cached_distribution_lookup):
+    monkeypatch.setattr(flow, "packages_distributions", cached_distribution_lookup)
+
+
 class FakePlatform:
     def __init__(self):
         self.functions = {}
