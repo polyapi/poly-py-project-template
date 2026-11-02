@@ -80,7 +80,8 @@ source cli/shell/flow.bash
 flow setup
 ```
 
-Setup creates and activates `.venv`, runs the SDK's setup prompts, verifies
+If you used kickstart, this setup is already complete; rerun it only to change
+targets. Otherwise, setup creates and activates `.venv`, runs the SDK's setup prompts, verifies
 the key with `/whoami`, and shows the tenant and environment names. Confirm
 the suggested `workflows/dev.env` or `workflows/prod.env`; an unclear name
 defaults to dev. Setup offers to create a missing file from the placeholder
@@ -97,13 +98,15 @@ be used, including dev, EU1, NA1, or NA2. The relevant settings are:
 
 | Setting | Meaning |
 | --- | --- |
-| `POLY_API_BASE_URL` | The selected instance URL |
-| `POLY_API_KEY` | A key for the intended tenant/environment |
+| `POLY_API_BASE_URL` | Optional override of the instance URL saved by SDK setup |
+| `POLY_API_KEY` | Optional override of the environment key saved by SDK setup |
 | `TARGET_ENV_ID` | The verified environment ID; Flow rejects a mismatch |
 | `POLY_EXEC_API_KEY` | The execution identity for deployed server functions |
 | `POLYAPI_NAMESPACE` | The context root this project owns, initially `example` |
 
-Keep actual values only in ignored local files. Do not commit them, paste them
+Flow reuses the connection saved by native SDK setup; new env files do not
+duplicate the URL or key. Keep credentials in SDK setup or ignored local files.
+Do not commit them, paste them
 into commands, or reuse a development execution key in production. Setup clears
 the saved execution key when the target changes. Add the correct key locally
 before deploying server functions.

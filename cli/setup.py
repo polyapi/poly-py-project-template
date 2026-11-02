@@ -18,6 +18,8 @@ from dotenv import dotenv_values
 from dotenv.parser import parse_stream
 import requests
 
+from cli.environment import CONNECTION_ALIASES
+
 ENV_PATHS = {"dev": "workflows/dev.env", "prod": "workflows/prod.env"}
 STATE_PATH = ".flow/setup.json"
 SDK_ENV_KEYS = ("POLY_API_KEY", "POLY_API_BASE_URL")
@@ -294,13 +296,22 @@ def prepare_env(
         check_local_path(example, root)
         text = example.read_text(encoding="utf-8")
         existing = {}
-    updates = {
-        "POLY_API_BASE_URL": url,
-        "POLY_API_KEY": key,
-        "TARGET_ENV_ID": identity.environment_id,
-    }
+    updates = {"TARGET_ENV_ID": identity.environment_id}
+    # Saved SDK setup is the default. Keep explicit bindings in existing files
+    # aligned with the newly verified target, without adding credential copies.
+    for names, value in zip(CONNECTION_ALIASES, (url, key)):
+        for name in names:
+            if name in existing:
+                updates[name] = value
+            elif not existing:
+                # Older copied examples may still contain active placeholders.
+                updates[name] = None
     changed_target = bool(existing) and (
-        (existing.get("POLY_API_BASE_URL") or "").rstrip("/") != url
+        any(
+            (existing[name] or "").rstrip("/") != url
+            for name in CONNECTION_ALIASES[0]
+            if name in existing
+        )
         or existing.get("TARGET_ENV_ID") != identity.environment_id
     )
     if not existing:
@@ -454,12 +465,9 @@ def save_project_files(updates: dict[Path, str]) -> None:
         raise
 
 
-def setup(root: Path, shell: str | None = None, profile: str | None = None) -> None:
-    previous = read_state(root)
-    with sdk_environment():
-        key, url = run_sdk_setup(root)
-        identity = fetch_identity(key, url)
-    envpath = choose_target(identity, url, previous)
+def save_target_configuration(
+    root: Path, envpath: str, identity: Identity, key: str, url: str
+) -> None:
     content = prepare_env(root, envpath, identity, key, url)
     editor = vscode_settings(root, envpath)
     # Prepare all content before writing; restore prior files on a partial failure.
@@ -478,6 +486,15 @@ def setup(root: Path, shell: str | None = None, profile: str | None = None) -> N
         + "\n",
     }
     save_project_files(updates)
+
+
+def setup(root: Path, shell: str | None = None, profile: str | None = None) -> None:
+    previous = read_state(root)
+    with sdk_environment():
+        key, url = run_sdk_setup(root)
+        identity = fetch_identity(key, url)
+    envpath = choose_target(identity, url, previous)
+    save_target_configuration(root, envpath, identity, key, url)
     print(f"\nConfigured {identity.label}. ENVPATH={envpath}")
     print(
         "VS Code: .venv interpreter and Python env file configured. Reopen terminals to refresh their environment."

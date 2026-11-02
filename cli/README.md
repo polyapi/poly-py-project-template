@@ -45,6 +45,12 @@ A failed generation is retried by the next push, including `--resume`.
 
 ## Interactive setup
 
+For a new project, the root README's [kickstart command](../README.md#quick-start)
+handles cloning, dependencies, skills, namespaces, SDK generation, and editor
+configuration. It reuses the same identity verification, environment pin, and
+target/editor save path described here. The following manual setup remains
+available for existing checkouts and target changes.
+
 Load the [Bash, Fish, or PowerShell helper](../README.md#guided-setup-with-flow)
 once, then run `flow setup`. The shell function activates the project's `.venv`
 and forwards commands to `uv run --locked python cli/flow.py`, with the selected
@@ -64,9 +70,11 @@ suggest dev. Both file choices remain available, and the selected tenant and
 environment are shown at confirmation. Previous selection wins only for the
 same base URL and environment ID.
 
-Setup updates only `POLY_API_BASE_URL`, `POLY_API_KEY`, and `TARGET_ENV_ID` in the
-selected env file. A new target gets an empty `POLY_EXEC_API_KEY` to prevent an
-inherited execution key being used; an existing file's target change requires
+Setup saves `TARGET_ENV_ID` in the selected env file. New files use saved SDK
+setup without duplicating the URL or key. Existing explicit connection bindings
+(including aliases) are updated to the confirmed target. A new target gets an
+empty `POLY_EXEC_API_KEY` to prevent an inherited execution key being used;
+an existing file's target change requires
 explicit confirmation and clears that key too. Other workflow configuration is
 preserved. Existing env files must be untracked and Git-ignored. Setup does not
 rename contexts, train APIs, deploy resources, or weaken branch/OTP safeguards.
@@ -295,11 +303,18 @@ resource pipeline, Python SDK parser, target pin, and SDK generation step.
 
 ## Target and update safeguards
 
-Set `POLY_API_BASE_URL` to the instance you intend to use: for example,
-`https://eu1.polyapi.io`, `https://na1.polyapi.io`, `https://na2.polyapi.io`, or
-another PolyAPI instance URL. Set `POLY_API_KEY` and `TARGET_ENV_ID` for the
-environment on that instance. Keep separate environment files for separate
-targets and select one with `ENVPATH`.
+Flow uses the connection saved by this project's native Python SDK setup.
+`POLY_API_BASE_URL` and `POLY_API_KEY` are optional overrides, not required env
+file entries. `BASE_URL` / `API_KEY` and older `POLYAPI_*` aliases also work.
+Precedence is selected file, shell, then saved SDK setup, resolved per field.
+For example, a key-only override retains the configured URL. Explicit empty
+values do not silently use saved defaults. Native SDK calls and generation use
+the same resolved pair. `build-schema` also uses the saved URL unless an explicit
+spec source or URL override is provided.
+
+Keep separate environment files for separate targets and select one with
+`ENVPATH`. Each must retain its own verified `TARGET_ENV_ID`, regardless of
+where the connection comes from.
 
 Flow loads `ENVPATH`, or root `.env` when omitted. The selected file must
 declare `TARGET_ENV_ID`; `GET /whoami` must report that exact environment
@@ -511,8 +526,8 @@ invalid or duplicate final identities stop training.
 `--generate-only` saves translated `.poly.json` models for review without
 training resources. `train-model PATH` trains a saved model; `--dry-run` validates
 and previews it. Existing model files are preserved unless `--overwrite-model`
-is explicit. Schema dependencies are ordered before training; cycles and
-cross-file identity collisions fail before resource upserts. A failed training
+is explicit. Schema dependencies are ordered before training; valid recursive references
+are retained, and cross-file identity collisions fail before resource upserts. A failed training
 request stops immediately, leaving saved models available for an idempotent
 retry. Use `--skip-generate` only when regenerating the SDK separately.
 
@@ -531,6 +546,34 @@ optional `--keyword` filters. Output formats timestamps, severity, messages and
 details; `--raw` prints JSON. Use `--page` / `--page-size`, or their aliases
 `--logs-page` / `--logs-page-size`. Limit defaults to page size.
 These commands run only when explicitly invoked.
+
+After loading the shell helper, the same commands are also available as
+`flow train-openapi`, `flow train-model`, and `flow delete-content`. The
+`python -m cli.operations` entry point remains supported.
+
+Repeat `--operation-id ID` on `train-openapi` to select original operation IDs
+before translation or AI enrichment. Each requested ID must match exactly once
+in each input spec. Only selected operations, shared path parameters and their
+transitively referenced schemas are retained. Selection requires bundled local
+references; bundle external `$ref` files first. Omit the option to train all
+operations. For example:
+
+```bash
+flow train-openapi designs/crm.json --context example.crm --operation-id validatePhone --operation-id getProfile
+```
+
+Descriptions are converted from HTML to readable plain text, including argument
+and schema descriptions, after AI enrichment. Request bodies, examples, defaults
+and the original spec are unchanged. Invalid schema identifiers such as `200`
+are normalized to `Schema200` with references updated in a temporary document.
+Valid recursive schemas are preserved; other dependencies are ordered before
+the schemas and functions that use them.
+
+Recursive schema training is enabled by default. The pinned Python SDK can skip
+recursive schema types during SDK generation; inspect its warnings when a
+contract contains recursion. Platform training and SDK type generation are
+separate checks.
+
 
 ## Schema refresh
 

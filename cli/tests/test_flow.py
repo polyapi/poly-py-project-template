@@ -24,8 +24,8 @@ SPEC.loader.exec_module(poly_deploy)
 def _restore_os_environ():
     """Undo env writes made by the code under test, not just by monkeypatch.
 
-    ``load_env`` calls ``load_dotenv(override=True)``, which copies the env
-    file's variables straight into ``os.environ``. monkeypatch cannot revert
+    ``load_env`` copies the env file's variables straight into ``os.environ``.
+    monkeypatch cannot revert
     those, so without this a test's env file leaks into every later test (and
     into other test modules in the same session).
     """

@@ -29,9 +29,8 @@ from importlib.metadata import packages_distributions
 from pathlib import Path
 from typing import Any, Iterable, Iterator, Literal, cast
 
-from dotenv import dotenv_values, load_dotenv
+from dotenv import dotenv_values
 from jsonschema import Draft7Validator
-from polyapi.config import get_api_key_and_url
 from polyapi.deployables import DeployableRecord
 from polyapi.parser import (
     _get_req_name_if_not_in_base,
@@ -49,6 +48,11 @@ from cli.function_graph import (
     GraphError,
     extract_references,
     match_reference,
+)
+from cli.environment import (
+    ConnectionError,
+    get_api_key_and_url as resolve_api_connection,
+    normalize_connection_settings,
 )
 
 SKIP_VALIDATION_ACKNOWLEDGEMENT = "I know what am doing"
@@ -869,6 +873,9 @@ ROOT_HELP_EPILOG = textwrap.dedent("""
       python cli/flow.py push --adopt-orphans
       python cli/flow.py push --delete-orphans
       python cli/flow.py push --help
+      python cli/flow.py train-openapi --help
+      python cli/flow.py train-model --help
+      python cli/flow.py delete-content --help
 
     Notes:
       - Functions are discovered from inline polyConfig in Python source; no peer JSON is required.
@@ -2115,7 +2122,15 @@ def print_startup_banner(
     logger.info("")
 
 
+def get_api_key_and_url() -> tuple[str | None, str | None]:
+    try:
+        return resolve_api_connection()
+    except ConnectionError as error:
+        raise DeployError(str(error)) from None
+
+
 def load_env(repo_root: Path) -> EnvLoadResult:
+    os.environ.update(normalize_connection_settings(os.environ))
     raw_envpath = os.environ.get("ENVPATH")
     if raw_envpath is not None:
         env_label = raw_envpath
@@ -2131,7 +2146,7 @@ def load_env(repo_root: Path) -> EnvLoadResult:
             raise DeployError(
                 f"ENVPATH points to `{env_label}`, but that file does not exist."
             )
-        load_dotenv(env_path, override=True)
+        os.environ.update(normalize_connection_settings(dotenv_values(env_path)))
         return EnvLoadResult(
             display_path=env_label,
             resolved_path=env_path,
@@ -2141,7 +2156,7 @@ def load_env(repo_root: Path) -> EnvLoadResult:
 
     env_path = (repo_root / DEFAULT_ENV_FILE).resolve(strict=False)
     if env_path.is_file():
-        load_dotenv(env_path, override=True)
+        os.environ.update(normalize_connection_settings(dotenv_values(env_path)))
     return EnvLoadResult(
         display_path=DEFAULT_ENV_FILE,
         resolved_path=env_path,
@@ -10147,6 +10162,23 @@ def sync_subscriptions(
 
 
 def main() -> int:
+    if sys.argv[1:2] and sys.argv[1] in {
+        "train-openapi",
+        "train-model",
+        "delete-content",
+        "logs",
+    }:
+        from cli import operations
+
+        try:
+            return operations.main(sys.argv[1:])
+        except (operations.flow.DeployError, OSError, ValueError) as error:
+            message = (
+                str(error)
+                if isinstance(error, operations.flow.DeployError)
+                else type(error).__name__
+            )
+            raise DeployError(message) from None
     if sys.argv[1:2] == ["setup"]:
         from cli.setup import main as setup_main
 

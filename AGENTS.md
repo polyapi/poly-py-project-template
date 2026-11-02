@@ -18,6 +18,7 @@ local skill below for the behavior being implemented or reviewed.
 | AI tools and structured weather output | [Weather AI](workflows/src/sample_workflow/OVERVIEW.md#weather-ai) |
 | Logging or error notifications | [Common utilities](workflows/src/utilities/common/OVERVIEW.md) |
 | Shell setup and editor/target selection | [Interactive setup](cli/README.md#interactive-setup), `cli/setup.py`, and `cli/shell/` |
+| New-project bootstrapping | [Quick start](README.md#quick-start), `kickstart/kickstart.sh`, `kickstart/kickstart.py`, and `kickstart/configure.py` |
 | Deployment, API training, or schema refresh | [Flow reference](cli/README.md), then `cli/flow.py`, `cli/operations.py`, or `cli/schema_refresh.py` |
 | Local checks or CI | `Makefile`, `pyproject.toml`, `conftest.py`, and `.github/workflows/ci.yml` |
 

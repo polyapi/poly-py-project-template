@@ -1,6 +1,7 @@
 """Synthetic onboarding tests: never load an operator's SDK or env credentials."""
 
 import json
+from io import StringIO
 import os
 from pathlib import Path
 import shutil
@@ -219,7 +220,8 @@ def test_setup_writes_identity_preserves_config_and_saves_no_secret_in_state(
     onboarding.setup(project)
     target = project / "workflows/dev.env"
     values = dotenv_values(target)
-    assert values["POLY_API_KEY"] == "synthetic-key"
+    assert "POLY_API_KEY" not in values
+    assert "POLY_API_BASE_URL" not in values
     assert values["TARGET_ENV_ID"] == IDENTITY.environment_id
     assert values["POLYAPI_NAMESPACE"] == "my_project"
     assert values["LOG_LEVEL"] == "debug"
@@ -479,6 +481,56 @@ def test_existing_target_keeps_execution_key_on_repeat(monkeypatch, project):
         project, "workflows/dev.env", IDENTITY, "synthetic-new", "https://test.invalid"
     )
     assert "POLY_EXEC_API_KEY=synthetic-exec" in content
+
+
+def test_namespace_only_existing_target_keeps_execution_key(monkeypatch, project):
+    path = project / "workflows/dev.env"
+    path.write_text(
+        "POLYAPI_NAMESPACE=demo\nTARGET_ENV_ID=test-environment\n"
+        "POLY_EXEC_API_KEY=synthetic-exec\n"
+    )
+    answers(monkeypatch, "")
+    values = dotenv_values(
+        stream=StringIO(
+            onboarding.prepare_env(
+                project,
+                "workflows/dev.env",
+                IDENTITY,
+                "synthetic-new",
+                "https://test.invalid",
+            )
+        )
+    )
+    assert values["POLY_EXEC_API_KEY"] == "synthetic-exec"
+    assert "POLY_API_KEY" not in values
+    assert "POLY_API_BASE_URL" not in values
+
+
+@pytest.mark.parametrize("aliases", list(zip(*onboarding.CONNECTION_ALIASES)))
+def test_setup_keeps_existing_connection_overrides_aligned(
+    monkeypatch, project, aliases
+):
+    url_name, key_name = aliases
+    path = project / "workflows/dev.env"
+    path.write_text(
+        f"{url_name}=https://old.invalid\n{key_name}=synthetic-old\nTARGET_ENV_ID=old\n"
+    )
+    answers(monkeypatch, "yes")
+
+    values = dotenv_values(
+        stream=StringIO(
+            onboarding.prepare_env(
+                project,
+                "workflows/dev.env",
+                IDENTITY,
+                "synthetic-new",
+                "https://test.invalid",
+            )
+        )
+    )
+    assert values[url_name] == "https://test.invalid"
+    assert values[key_name] == "synthetic-new"
+    assert values["TARGET_ENV_ID"] == IDENTITY.environment_id
 
 
 def test_symlink_config_is_not_followed(project, tmp_path):
