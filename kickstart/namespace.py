@@ -211,4 +211,21 @@ def rewrite_namespace(root: Path, namespace: str) -> None:
             )
         if updated != original:
             file.write_text(updated, encoding="utf-8")
+    rewrite_env_example(root, namespace)
     rewrite_project_docs(root, namespace)
+
+
+def rewrite_env_example(root: Path, namespace: str) -> None:
+    """Keep env files later created from the example aligned with the code."""
+    file = root / "workflows/dev.env.example"
+    if not file.is_file() or file.is_symlink():
+        return
+    original = file.read_text(encoding="utf-8")
+    slug = namespace.replace(".", "-").replace("_", "-")
+    updated = re.sub(
+        r"(?m)^(POLYAPI_NAMESPACES?=)example(?=$|,)",
+        lambda match: match[1] + namespace,
+        original,
+    ).replace("/apis/example-", "/apis/" + slug + "-")
+    if updated != original:
+        file.write_text(updated, encoding="utf-8")

@@ -6,7 +6,7 @@ and Vari. After your first request works, explore validation, errors, and the
 optional scheduled job.
 
 New to the template? Complete [Getting started](../../../README.md#getting-started)
-first. Open a Bash terminal in your **project root**: the folder containing
+first. Open a Bash or zsh terminal in your **project root**: the folder containing
 `pyproject.toml`, `cli/`, and `workflows/`. Run all terminal commands below from
 that folder. File settings and Canopy values are labeled separately.
 
@@ -213,13 +213,17 @@ URL and a PolyAPI key for that same environment, pressing Enter after each.
 The key stays hidden while you enter it:
 
 ```bash
-read -r -p "Paste the full deployed webhook URL: " POLY_TEST_WEBHOOK_URL
-read -r -s -p "Paste the PolyAPI key for that environment: " POLY_API_KEY
+printf 'Paste the full deployed webhook URL: '
+read -r POLY_TEST_WEBHOOK_URL
+printf 'Paste the PolyAPI key for that environment: '
+stty -echo; read -r POLY_API_KEY; stty echo
 printf '\n'
 ```
 
+These prompts work in both Bash and zsh (the macOS default).
+
 These values stay in this shell session; do not save them in tracked files.
-A value in an env file does not automatically become a Bash variable. If you
+A value in an env file does not automatically become a shell variable. If you
 prefer env-file loading, use the [live test command](#verification) after
 configuring both moods.
 
