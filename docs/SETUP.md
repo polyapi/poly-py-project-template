@@ -16,6 +16,11 @@ helper for your shell once:
 | Fish | `source cli/shell/flow.fish` |
 | PowerShell | `. ./cli/shell/flow.ps1` |
 
+This defines the `flow` command in your current shell. The helper activates the
+project's `.venv` when running project commands, so you do not need to source
+the virtual environment separately. After setup, it also selects the saved
+environment file for those commands.
+
 zsh is the default shell on macOS and in VS Code on macOS. Setup's optional
 profile step targets Bash's `~/.bash_profile`, which zsh does not read; to keep
 `flow` in future zsh terminals, add the same `source` line with the checkout's

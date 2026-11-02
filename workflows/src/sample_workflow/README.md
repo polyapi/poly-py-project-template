@@ -270,10 +270,7 @@ configuring both moods.
 the HTTP status as well as the JSON body:
 
 ```bash
-curl -i -X POST "$POLY_TEST_WEBHOOK_URL" \
-  --header 'Content-Type: application/json' \
-  --header "Authorization: Bearer $POLY_API_KEY" \
-  --data '{ "name": "Ada", "mood": "wise" }'
+curl -i -X POST "$POLY_TEST_WEBHOOK_URL" --header 'Content-Type: application/json' --header "Authorization: Bearer $POLY_API_KEY" --data '{ "name": "Ada", "mood": "wise" }'
 ```
 
 Expect HTTP 200 and a body with this shape; the advice text varies:

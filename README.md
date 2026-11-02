@@ -36,9 +36,24 @@ and opens VS Code. It does not deploy resources or train the sample APIs.
 After SDK generation, kickstart offers to save the `flow` helper for future
 Bash, zsh, Fish, or PowerShell terminals. Choose your shell and confirm the shown
 profile file before it writes anything; Enter at the save prompt declines.
-Skipping this step leaves setup complete. For your current terminal, load the
-[appropriate helper](docs/SETUP.md#existing-checkout-or-manual-setup), or use the
-explicit `uv run` commands below without it.
+Skipping this step leaves setup complete.
+
+For your current Bash or zsh terminal, change into the new project and load the
+helper. Replace `your-project-name` with the name you entered, or use the full
+project path printed by kickstart if you chose a different parent directory:
+
+```bash
+cd your-project-name
+source cli/shell/flow.bash
+flow --version
+```
+
+Sourcing the helper makes `flow` available in this terminal. When you run project
+commands, it automatically activates the project's `.venv` and selects the
+environment saved by setup. You do not need to source `.venv/bin/activate`
+separately. Load the helper in each new terminal unless your saved profile
+already does it; see the [other shell helpers](docs/SETUP.md#existing-checkout-or-manual-setup)
+for Fish and PowerShell.
 
 Already have a checkout or need to change targets? Follow the
 [guided setup](docs/SETUP.md#existing-checkout-or-manual-setup).
@@ -65,19 +80,23 @@ with `POLY_DEPLOY_SKIP_PATHS` when you no longer want them in normal pushes.
 
 ## Everyday commands
 
-Run from the project root after setup:
+Run from the project root after setup and loading the helper:
 
 ```bash
-export ENVPATH=workflows/dev.env
-uv run --locked python cli/flow.py --version
+flow --version
 make check
 uv run --locked pytest workflows/src/sample_workflow/tests/test_motd.py
-uv run --locked python cli/flow.py \
-  push-dynamic --paths sample_workflow --types functions,variables,schemas,webhooks,triggers,jobs --dry-run
+flow push-dynamic --paths sample_workflow --types functions,variables,schemas,webhooks,triggers,jobs --dry-run
 ```
 
-Export your setup-selected path once per terminal session; Python Flow resolves
-it from the project root. Keep your owned namespace and verified
+`pytest` runs Python tests. `uv run` uses the project's managed `.venv` without
+manual activation. `--locked` keeps `uv.lock` unchanged and stops if the lockfile
+is missing or out of date; see the [uv command reference](https://docs.astral.sh/uv/reference/cli/#uv-run).
+
+`flow` uses the environment saved by setup; rerun `flow setup` to change targets.
+If you prefer explicit `uv run --locked python cli/flow.py ...` commands without
+the helper, [export `ENVPATH` once](docs/SETUP.md#select-an-environment-once).
+Keep your owned namespace and verified
 [`TARGET_ENV_ID` pin](docs/SETUP.md#pin-the-target-environment) in the selected environment
 file. Review the target and expanded deployment plan before a real push. Keep
 real environment files and secrets out of Git.
