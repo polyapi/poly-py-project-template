@@ -70,7 +70,7 @@ configuration. It reuses the same identity verification, environment pin, and
 target/editor save path described here. The following manual setup remains
 available for existing checkouts and target changes.
 
-Load the [Bash, Fish, or PowerShell helper](../docs/SETUP.md#existing-checkout-or-manual-setup)
+Load the [Bash/zsh, Fish, or PowerShell helper](../docs/SETUP.md#existing-checkout-or-manual-setup)
 once, then run `flow setup`. The shell function activates the project's `.venv`
 and forwards resource commands to `uv run --locked python cli/flow.py`, with
 the selected `ENVPATH`. It finds the nearest Python Flow project from the current

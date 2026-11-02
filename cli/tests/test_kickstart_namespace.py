@@ -97,6 +97,11 @@ def test_only_curated_regular_project_guides_are_personalized(tmp_path):
 
 @pytest.mark.parametrize("namespace", ["my_project", "acme.integrations"])
 def test_real_sample_guides_and_artefacts_stay_aligned(tmp_path, namespace):
+    advice = (
+        ROOT / "workflows/src/sample_workflow/artefacts/vari/advice_api_config.json"
+    )
+    if json.loads(advice.read_text())["context"] != "example.sample_workflow":
+        pytest.skip("Template-only check; this project's namespace is already set.")
     files = (
         "README.md",
         "docs/SETUP.md",
@@ -134,6 +139,25 @@ def test_real_sample_guides_and_artefacts_stay_aligned(tmp_path, namespace):
     utilities = (tmp_path / files[6]).read_text()
     assert f"poly.{namespace}.utilities.log" in utilities
     assert "OOB.polyapi.internal.alerting.sendAlertToPoly" in utilities
+
+
+def test_env_example_namespace_and_webhook_slug_are_personalized(tmp_path):
+    example = tmp_path / "workflows/dev.env.example"
+    example.parent.mkdir(parents=True)
+    example.write_text(
+        "POLYAPI_NAMESPACE=example\n"
+        "# POLYAPI_NAMESPACES=example,second\n"
+        "POLY_TEST_WEBHOOK_URL=https://env.example.polyapi.io/apis/example-motd/motd\n"
+        "SLACK_CHANNEL_ID=example\n"
+    )
+    rewrite_namespace(tmp_path, "acme.integrations")
+    assert example.read_text() == (
+        "POLYAPI_NAMESPACE=acme.integrations\n"
+        "# POLYAPI_NAMESPACES=example,second\n"
+        "POLY_TEST_WEBHOOK_URL="
+        "https://env.example.polyapi.io/apis/acme-integrations-motd/motd\n"
+        "SLACK_CHANNEL_ID=example\n"
+    )
 
 
 def test_invalid_namespace_does_not_change_project_docs(tmp_path):

@@ -12,9 +12,14 @@ helper for your shell once:
 
 | Shell | Load the `flow` command |
 | --- | --- |
-| Bash | `source cli/shell/flow.bash` |
+| Bash or zsh | `source cli/shell/flow.bash` |
 | Fish | `source cli/shell/flow.fish` |
 | PowerShell | `. ./cli/shell/flow.ps1` |
+
+zsh is the default shell on macOS and in VS Code on macOS. Setup's optional
+profile step targets Bash's `~/.bash_profile`, which zsh does not read; to keep
+`flow` in future zsh terminals, add the same `source` line with the checkout's
+absolute path to `~/.zshrc` instead.
 
 Then run:
 
@@ -354,10 +359,11 @@ rewrite_namespace(Path.cwd(), "my_project")
 PY
 ```
 
-This replaces the starter root in code, artefacts, and tutorial examples. It
-does not edit your selected environment file, rename already-customized roots,
-or change remote resources. Review project-prefixed job/trigger names and Canopy
-subpaths separately. To locate remaining starter references:
+This replaces the starter root in code, artefacts, tutorial examples, and
+`workflows/dev.env.example`. It does not edit your selected environment file,
+rename already-customized roots, or change remote resources. Review
+project-prefixed job/trigger names and Canopy subpaths separately. To locate
+remaining starter references:
 
 ```bash
 rg -n '\bexample(?:\b|_)' workflows/src designs/examples

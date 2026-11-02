@@ -13,8 +13,9 @@ walks through a working integration and explains the pieces as you use them.
 ## Getting started
 
 Requires [uv](https://docs.astral.sh/uv/), Git, GitHub SSH access to the template
-and skills repositories, and the VS Code `code` command. Node.js and GitHub CLI
-(`gh`) are not required.
+and skills repositories, and the VS Code `code` command (on macOS, run
+**Shell Command: Install 'code' command in PATH** from the VS Code command
+palette). Node.js and GitHub CLI (`gh`) are not required.
 
 ```bash
 git clone git@github.com:polyapi/poly-py-project-template.git && \
@@ -25,6 +26,11 @@ Follow the prompts. Kickstart installs dependencies and skills, configures your
 namespace and verified target, updates starter contexts, SDK references, and tutorial examples,
 generates the SDK, creates `main` and `develop`,
 and opens VS Code. It does not deploy resources or train the sample APIs.
+
+Kickstart does not add the `flow` shortcut to your shell. To use commands such
+as `flow self-update`, run `source cli/shell/flow.bash` (Bash or zsh) from the
+project root in each terminal, or [save the helper](docs/SETUP.md#existing-checkout-or-manual-setup)
+in your shell profile. The explicit `uv run` commands below work without it.
 
 Already have a checkout or need to change targets? Follow the
 [guided setup](docs/SETUP.md#existing-checkout-or-manual-setup).
