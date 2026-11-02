@@ -204,9 +204,10 @@ overrides, AI enrichment, and validation flags.
 
 ## Kickstart details
 
-Kickstart asks for the project name, parent directory (default `~/Code/poly`),
-namespace (default `demo`), a hidden API key, and region (`dev`, `na1`, `na2`,
-or `eu1`). Relative parent paths resolve from your current terminal directory.
+Kickstart asks for the project name, parent directory (defaulting to your current
+terminal directory), namespace (default `demo`), a hidden API key, and region
+(`dev`, `na1`, `na2`, or `eu1`). Relative parent paths resolve from your current
+terminal directory.
 It installs the pinned Python dependencies and Python skills (including the
 dedicated `api-function-training` skill), updates starter
 contexts, SDK references, and code examples in the copied docs, verifies your
@@ -215,9 +216,14 @@ Confirm whether to use `dev.env` or `prod.env`; the verified `TARGET_ENV_ID` is
 saved automatically. The URL/key stay in native SDK setup.
 
 It then creates `main` with an initial commit, switches to `develop`, and opens
-VS Code. The current template checkout, including pending source changes, is
-copied; ignored local configuration and credential files are excluded.
-Kickstart does not deploy resources or train the sample APIs.
+VS Code. The [curl command](../README.md#getting-started) downloads a temporary
+public template snapshot; skills use a shallow HTTPS Git clone. No GitHub
+authentication is needed. The downloaded snapshot is removed after setup.
+
+You can also run `bash kickstart/kickstart.sh` from an existing template
+checkout; that path includes pending source changes. Local configuration and
+credential files are excluded from the new project. Kickstart does not deploy
+resources or train the sample APIs.
 The training skill must be available on `poly-skills/main`; setup stops with a
 clear message if it is missing.
 

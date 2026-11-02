@@ -12,15 +12,21 @@ walks through a working integration and explains the pieces as you use them.
 
 ## Getting started
 
-Requires [uv](https://docs.astral.sh/uv/), Git, GitHub SSH access to the template
-and skills repositories, and the VS Code `code` command (on macOS, run
+Requires [uv](https://docs.astral.sh/uv/), curl, tar, Git, and the VS Code `code`
+command (on macOS, run
 **Shell Command: Install 'code' command in PATH** from the VS Code command
-palette). Node.js and GitHub CLI (`gh`) are not required.
+palette). GitHub authentication, Node.js, and GitHub CLI (`gh`) are not required.
 
 ```bash
-git clone git@github.com:polyapi/poly-py-project-template.git && \
-  ./poly-py-project-template/kickstart/kickstart.sh
+curl -fsSL https://raw.githubusercontent.com/polyapi/poly-py-project-template/main/kickstart/kickstart.sh | bash
 ```
+
+Kickstart downloads the public template into a temporary directory and fetches
+skills with a shallow HTTPS Git clone. You do not need to clone the template
+first. From an existing template checkout, `bash kickstart/kickstart.sh` also works.
+
+The parent directory defaults to your current terminal directory. Your project
+is created inside it using the project name you enter.
 
 Follow the prompts. Kickstart installs dependencies and skills, configures your
 namespace and verified target, updates starter contexts, SDK references, and tutorial examples,

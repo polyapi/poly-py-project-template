@@ -1,4 +1,4 @@
-"""Interactive bootstrap from the current template checkout; no gh required."""
+"""Interactive bootstrap from a checkout or public snapshot; no gh required."""
 
 import getpass
 import os
@@ -12,7 +12,7 @@ import tomllib
 
 from namespace import rewrite_namespace, valid_namespace
 
-SKILLS_REPOSITORY = "git@github.com:polyapi/poly-skills.git"
+SKILLS_REPOSITORY = "https://github.com/polyapi/poly-skills.git"
 PRIVATE_DIRECTORIES = {
     ".git",
     ".venv",
@@ -52,24 +52,28 @@ def copyable(relative: Path) -> bool:
 
 
 def copy_checkout(source: Path, target: Path) -> None:
-    # Include pending source changes, unlike git archive HEAD. Git excludes
-    # ignored local files; the explicit filter also rejects tracked secrets.
-    paths = (
-        subprocess.check_output(
-            [
-                "git",
-                "-C",
-                str(source),
-                "ls-files",
-                "--cached",
-                "--others",
-                "--exclude-standard",
-                "-z",
-            ]
+    if (source / ".git").exists():
+        # Include pending changes in a local checkout, excluding ignored files.
+        paths = (
+            subprocess.check_output(
+                [
+                    "git",
+                    "-C",
+                    str(source),
+                    "ls-files",
+                    "--cached",
+                    "--others",
+                    "--exclude-standard",
+                    "-z",
+                ]
+            )
+            .decode()
+            .split("\0")
         )
-        .decode()
-        .split("\0")
-    )
+    else:
+        # A public GitHub snapshot has no Git metadata. Apply the same private
+        # file filter below before copying any source file.
+        paths = [str(file.relative_to(source)) for file in source.rglob("*")]
     for name in sorted(set(filter(None, paths))):
         relative = Path(name)
         if relative.is_absolute() or ".." in relative.parts or not copyable(relative):
@@ -79,7 +83,7 @@ def copy_checkout(source: Path, target: Path) -> None:
             item.is_symlink() for item in (file, *file.parents) if item != source.parent
         ):
             raise KickstartError(
-                "Template source contains a symlink; use a regular Git checkout."
+                "Template source contains a symlink; use regular source files."
             )
         if not file.is_file():
             continue  # A tracked file may have been deleted in the working tree.
@@ -139,7 +143,7 @@ def main() -> int:
         print(
             "Use lowercase letters, numbers, dots, underscores or hyphens; start and end with a letter or number."
         )
-    default_parent = Path.home() / "Code/poly"
+    default_parent = Path.cwd()
     while True:
         parent = (
             Path(
