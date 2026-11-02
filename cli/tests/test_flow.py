@@ -3042,6 +3042,22 @@ def test_parse_args_without_command_returns_none(capsys: CaptureFixture[str]) ->
     assert "Use the `push` command" in captured.out
 
 
+@pytest.mark.parametrize("flag", ["--version", "-V"])
+def test_parse_args_version_exits_without_running_flow(
+    flag: str, capsys: CaptureFixture[str], monkeypatch: MonkeyPatch
+) -> None:
+    def unexpected_run(*args: object, **kwargs: object) -> None:
+        pytest.fail("A version check must not run Flow or load target settings")
+
+    monkeypatch.setattr(poly_deploy, "run_flow", unexpected_run)
+    monkeypatch.setattr(sys, "argv", ["flow", flag])
+    with pytest.raises(SystemExit) as result:
+        poly_deploy.main()
+    assert result.value.code == 0
+    assert capsys.readouterr().out == f"Flow CLI {poly_deploy.__version__}\n"
+    assert "--version" in poly_deploy.create_parser().format_help()
+
+
 def test_parse_args_push_command_builds_cli_args() -> None:
     parsed = poly_deploy.parse_args(
         ["push", "--dry-run", "--paths", "sample_workflow", "--types", "functions,jobs"]

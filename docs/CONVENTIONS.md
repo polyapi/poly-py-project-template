@@ -1,5 +1,10 @@
 # Project conventions
 
+Use these conventions when extending a project created from the Python template.
+The checked-in code, JSON artefacts, and Flow tooling define current behavior;
+verify implementation before relying on older documentation. Start setup in
+[Getting started](../README.md#getting-started), then follow a sample lesson.
+
 ## Workflow layout
 
 ```text
@@ -15,6 +20,7 @@ workflows/src/<workflow>/
     triggers/
     jobs/
     ai-functions/
+    specs/
     canopy/
     subscriptions/
   tests/test_<behavior>.py
@@ -30,6 +36,12 @@ them in a root `scripts/` directory outside Flow's workflow discovery paths.
 Add `workflows/src/globals/` only when the project has shared platform resources
 that need it. Do not add empty `types/`, `deployment/`, `scripts/`, or `globals/`
 directories to reserve space.
+
+Keep general developer guides in `docs/`, including these conventions and
+[setup and development](SETUP.md). Keep the root README focused on getting
+started and finding examples. Workflow onboarding starts in its same-folder
+`README.md`; runtime references and optional lessons stay in `OVERVIEW.md`.
+Repository-wide agent instructions stay in [AGENTS.md](../AGENTS.md).
 
 ## Naming
 
@@ -56,6 +68,11 @@ Flow uploads the individual source file. Keep its runtime types and metadata
 inline; neighboring modules are not packaged with it. Use the native Python SDK
 for shared deployed functions rather than importing another deployable file.
 
+A client function executes in its caller's process. A server function executes
+on PolyAPI and can be a webhook or job destination. Webhook and job handlers
+accept three arguments: the event body, headers, and parameters. Error-handler
+triggers supply one error object instead; do not reuse those signatures blindly.
+
 - Call deployed dependencies through `polyapi.poly`, not local imports.
 - Generated asynchronous API/server calls use `_async`; asynchronous client
   functions keep their declared names.
@@ -65,7 +82,8 @@ for shared deployed functions rather than importing another deployable file.
 - For SECRET values, pass `.inject("path")` unchanged into a generated API/server
   call. Do not unwrap, cache, stringify, or pass it through a client function.
 - Use `TypedDict` from `typing_extensions` for structured runtime contracts.
-- SDK 0.3.21.dev1 deployable boundaries use `Dict`/`List`, supported scalars, or local
+- The SDK pinned in [pyproject.toml](../pyproject.toml) is 0.3.21.dev1. Its deployable
+  boundaries use `Dict`/`List`, supported scalars, or local
   named `TypedDict` types. Builtin generics, unions, `Literal`, and `None` returns
   can silently become `any`; verify native emitted schemas. Keep enum checks at
   runtime. The common logging helpers return booleans instead of an untyped void.
@@ -88,10 +106,29 @@ or establish the target environment; use a live dry run before deploying.
 
 ## Ownership and references
 
-`POLYAPI_NAMESPACE` must be a Python-compatible dotted context. Alternatively,
-`POLYAPI_NAMESPACES` selects an explicit comma-separated list of owned roots.
-Local functions and context-bearing artefacts must use that root or a child,
-for example `example.sample_workflow`.
+**The context root of every locally owned resource must match
+`POLYAPI_NAMESPACE`.** This setting declares ownership; it does not select a
+PolyAPI instance or environment. It must be a Python-compatible dotted context,
+with no keywords as segments. Alternatively, `POLYAPI_NAMESPACES` selects an
+explicit comma-separated list of owned roots and takes precedence.
+
+For example, with `POLYAPI_NAMESPACE=my_project`:
+
+| Item | Matching value |
+| --- | --- |
+| Workflow `polyConfig.context` and JSON `context` | `my_project.sample_workflow` |
+| Shared logger context | `my_project.utilities` |
+| Generated function call | `poly.my_project.utilities.log(...)` |
+| Generated configuration read | `vari.my_project.configurations.log_settings.log_level.get_async()` |
+| Webhook security reference | `{{my_project.sample_workflow.validate_motd_payload}}` |
+
+Kickstart replaces the starter context root in samples and pre-included
+utilities, including SDK calls, portable references, webhook slugs, and relevant
+error-handler paths. It also personalizes the code examples in project docs and
+sample guides, and writes the selected namespace to the Flow file.
+For manual adoption, update all of those together and review project-prefixed
+job/trigger names. Editing only the environment variable does not rewrite code
+or rename existing deployed resources.
 
 Use portable `{functionName, functionContext}` and
 `{variableName, variableContext}` references where supported. Webhook security
@@ -103,6 +140,11 @@ destinations may reference accessible
 external functions by exact context and name. This does not make those
 external functions eligible for deletion. Vari references in these artefacts
 must belong to the project namespace.
+
+Keep external contexts such as `OOB.polyapi.internal.alerting` and provider URLs
+unchanged. Only rename project-owned roots. After changing a deployed resource's
+identity, regenerate the SDK and update consumers; review any old resources
+separately rather than assuming they were renamed remotely.
 
 Jobs and triggers have no resource context. Use project-prefixed names and
 destination functions. External destinations require names beginning with an
@@ -117,7 +159,31 @@ to the unresolved source; it never persists substituted environment values.
 
 Scoped pushes skip orphan detection. Full pushes report namespace-owned
 orphans; deletion requires `--delete-orphans`. Skipping a local directory
-does not make its resources orphans.
+does not make its resources orphans. Use [`POLY_DEPLOY_SKIP_PATHS`](SETUP.md#skip-sample-deployments)
+to exclude learning samples from normal deployments while keeping their source.
+
+## Target selection and generated SDK
+
+Keep `POLYAPI_NAMESPACE` and the verified `TARGET_ENV_ID` in the selected local
+Flow environment file; see [target pinning](SETUP.md#pin-the-target-environment)
+for setup and mismatch handling. Flow remote commands verify that pin against `/whoami`,
+including deployment dry runs. Shell exports and confirmation bypasses do not
+replace the file's pin. An offline training preview checks input only and does
+not prove target identity or translated SDK names.
+
+Flow reuses the native SDK's saved connection by default. Its connection aliases
+are resolved per field before SDK operations. Direct `python -m polyapi` commands
+and generated SDK calls accept the canonical `POLY_API_BASE_URL` / `POLY_API_KEY`
+overrides; they do not apply Flow's other aliases or target-pin check. Confirm
+the connection and generated bindings before direct calls. Never commit real
+environment files, keys, or generated SDK credentials.
+
+Keep source OpenAPI specs in the workflow's `artefacts/specs/` folder. Training
+creates outbound API Functions, while a push deploys other selected resources;
+a specs folder is not automatically trained by a push. Review translated
+`.poly.json` models, names, and argument bindings. `--disable-ai` skips optional
+metadata enrichment, `train-model` retries a saved model, and `--overwrite-model`
+deliberately regenerates it. See [Flow training](../cli/README.md#openapi-training-cleanup-and-logs).
 
 ## Tests and maintenance
 
@@ -126,6 +192,10 @@ in tests without adding runtime compatibility shims.
 Runtime tests use the `integration` marker and require
 `RUN_POLY_INTEGRATION=true`. Provider calls, deployments, and AI usage require
 an explicitly selected target.
+The weather integration test additionally requires `RUN_AI_INTEGRATION=true`.
+Direct HTTP webhook tests require `POLY_TEST_WEBHOOK_URL` and `POLY_API_KEY` in
+the test process; they do not reuse the SDK's saved key. These live calls do not
+perform Flow's target-pin check.
 
 Run `make check` after changes. CI installs the locked dependencies on Python
 3.12.12 and runs the same command on pushes and pull requests. Live integration
@@ -136,7 +206,10 @@ Keep each workflow's `OVERVIEW.md` useful to engineers and coding agents: descri
 entrypoints, resource dependencies, configuration, runtime contracts, and the
 focused checks. Update it when those facts change, and verify them against code
 and artefacts. Keep agent-wide navigation and instructions in `AGENTS.md` and
-Flow command details in `cli/README.md`. Preserve the `artefacts` spelling.
+Flow command details in [the CLI guide](../cli/README.md). Preserve the
+`artefacts` spelling. Lessons should include one first-run path, observable
+checkpoints, a request/result example, focused verification, and exercises.
+Keep advanced setup and operational reference after the first successful run.
 
 Log fixed event names and safe operational fields. Do not log raw payloads,
 credentials, or exception text that may contain them. Global error handlers

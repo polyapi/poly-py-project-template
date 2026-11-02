@@ -1,256 +1,361 @@
 # Build your first PolyAPI workflow in Python
 
-This tutorial takes you from a fresh clone to a protected message-of-the-day
-webhook, then adds an optional AI weather function in the same workflow.
-Run shell commands from the repository root. Examples use Bash; the root
-[README](../../../README.md#quick-start) includes Fish and PowerShell setup.
+Build a protected endpoint that greets someone with advice or a joke. This lesson
+introduces webhooks, triggers, server and client functions, trained API Functions,
+and Vari. After your first request works, explore validation, errors, and the
+optional scheduled job.
 
-## 1. Understand the pieces
+New to the template? Complete [Getting started](../../../README.md#getting-started)
+first. Open a Bash or zsh terminal in your **project root**: the folder containing
+`pyproject.toml`, `cli/`, and `workflows/`. Run all terminal commands below from
+that folder. File settings and Canopy values are labeled separately.
 
-PolyAPI hosts integration resources in a **tenant** and an **environment**.
-The generated Python SDK exposes the resources your key can access.
-Start with [how Poly fits together](https://docs.polyapi.io/concepts/mental_model.html)
-and the [resource guide](https://docs.polyapi.io/concepts/choosing-a-resource.html).
+Using a coding agent? Kickstart installs the relevant skills. A manual checkout
+already includes the core Python skills; adding the broader
+[poly-skills collection](../../../docs/SETUP.md#agent-skills) is optional.
+You can complete this lesson without an agent.
 
-| Primitive | Purpose | Where you see it here |
-| --- | --- | --- |
-| API function | A trained outbound HTTP call exposed through the SDK | Joke, advice, geocoding, and weather APIs trained from OpenAPI specs |
-| [Client function](https://docs.polyapi.io/generated_sdks/client_functions.html) | Reusable Python that runs in its caller | `motd_client` chooses an API and validates its response |
-| [Server function](https://docs.polyapi.io/functions/server_functions.html) | Python hosted by PolyAPI | `motd_server` validates input and orchestrates the greeting |
-| Schema | A reusable data contract | The webhook payload schema and generated function types |
-| [Webhook](https://docs.polyapi.io/webhooks/managing-webhooks.html) | An inbound HTTP endpoint | The protected message-of-the-day URL |
-| Trigger | Connects an event to a server function | The webhook trigger and error trigger |
-| Job | Calls a server function on a schedule | The bundled job starts disabled |
-| [Vari](https://docs.polyapi.io/vari_variables/code.html) | Configuration and secrets with controlled visibility | The joke host is SECRET; the advice host is OBSCURED |
-| Tabi | Managed structured tables | Supported by Flow; this sample does not need a table |
-| AI function | A prompt, tools, and an output contract | Optional `uplifting_weather` uses the two weather APIs |
-| Canopy / PolyUI | The platform UI and hosted applications | Inspect resources, enter secrets, and view executions |
-| GraphQL subscription | A long-lived event source | Supported by Flow; no subscription is needed for this tutorial |
+## PolyAPI foundations
 
-API, client, and server functions have different execution boundaries. In
-particular, a client function runs in the caller; it is not another remote
-server invocation. See the [Python SDK guide](https://docs.polyapi.io/generated_sdks/python.html).
-
-## 2. Find the source and resources
+A **tenant** contains **environments**, each with its own resource catalog. The
+URL and API key select the actual target; local `dev.env` and `prod.env` filenames
+are conventions. The namespace identifies the resources this project owns.
+Read the [mental model](https://docs.polyapi.io/concepts/mental_model.html),
+[resource guide](https://docs.polyapi.io/concepts/choosing-a-resource.html),
+[environment guide](https://docs.polyapi.io/environments/ui.html), and
+[Python SDK guide](https://docs.polyapi.io/generated_sdks/python.html).
 
 ```text
 workflows/src/sample_workflow/
-  README.md                 This onboarding tutorial
-  OVERVIEW.md               Runtime contracts and operational details
-  client/                   Message selection and payload validation
-  server/                   Webhook/job entrypoint and error handler
+  README.md                 First-request onboarding tutorial
+  OVERVIEW.md               Runtime reference and optional weather AI lesson
+  client/                   API selection and response validation
+  server/                   Webhook/job handler, validation, and error handler
   artefacts/
-    specs/motd/             Joke and advice OpenAPI specifications
-    specs/weather/          Geocoding and weather OpenAPI specifications
-    schemas/                Webhook input contract
+    specs/motd/             Joke and advice API descriptions
+    specs/weather/          Geocoding and weather API descriptions
     vari/                   Configuration declarations, not real secrets
-    webhooks/               Endpoint and security configuration
+    webhooks/               Endpoint, inline payload schema, and security
     triggers/               Event-to-function connections
     jobs/                   Disabled scheduled invocation
     ai-functions/           Optional weather AI definition
   tests/                    Offline tests and opt-in live tests
 ```
 
-The shared functions live in `workflows/src/utilities/common/`. Flow itself and
-its tests live in `cli/`. The directory spelling is `artefacts`.
-Python files carry inline `polyConfig`; JSON files describe other resources.
-The **context and name**, not the local filename, identify a deployed resource.
+Shared helpers live in `workflows/src/utilities/common/`; Flow lives in `cli/`.
+A resource's context and name identify it on PolyAPI, independently of its local
+filename. Flow uploads each deployable Python file on its own; neighboring
+modules are not bundled.
+
+## What you are building
+
+Your first request follows the advice path:
 
 ```mermaid
-flowchart LR
-    W["Protected webhook"] --> V["Payload validation"]
-    V --> T["Synchronous trigger"] --> S["motd_server"]
-    J["Disabled scheduled job"] --> S
-    S --> C["motd_client"] --> A["Joke or advice API"]
-    S --> E["Error handler"]
-    U["Optional AI invocation"] --> AI["uplifting_weather"]
-    AI --> G["Geocoding API"]
-    AI --> F["Weather API"]
+flowchart TD
+    R[Send a name and wise mood] --> V{Webhook security accepts request}
+    V -->|no| X[Reject before workflow runs]
+    V -->|yes| T[Trigger calls server and waits]
+    T --> S[Server coordinates and client selects advice]
+    S --> A[Trained API gets advice from provider]
+    A --> G[Server adds the name and returns the greeting]
+    classDef blue fill:#EDF3FF,color:#172B4D,stroke:#3D77EE
+    classDef yellow fill:#FFF7DF,color:#172B4D,stroke:#F9B528
+    classDef green fill:#EAF6EE,color:#172B4D,stroke:#2F9E4B
+    classDef red fill:#FDEDEB,color:#172B4D,stroke:#E63F35
+    class R,T blue
+    class V,A yellow
+    class S,G green
+    class X red
 ```
 
-## 3. Install and select an environment
+**Flow** is this project's command-line tool for creating and updating resources
+in PolyAPI. The **generated SDK** gives you Python functions for those
+resources, such as `poly.*` calls and `vari.*` configuration reads. **Vari** stores
+configuration values; **Canopy** is the PolyAPI web interface used below to
+manage them. The **PolyAPI runtime** hosts the endpoint and server functions;
+client helpers run in their caller's process.
 
-Install [uv](https://docs.astral.sh/uv/) and make the tools listed in the root
-[prerequisites](../../../README.md#local-development-checks) available to your
-terminal. Python remains pinned to **3.12.12** and the native SDK to
-**0.3.21.dev1**.
+Here, **training an API** means reading its OpenAPI description and creating a
+function that your code can call. Training does not call the external API, and
+is separate from the [Weather AI lesson](OVERVIEW.md#weather-ai).
+
+| Building block | Why it exists in this sample | Read the implementation |
+| --- | --- | --- |
+| Webhook and security function | Accept authenticated HTTP requests and reject invalid input | [Webhook](artefacts/webhooks/motd_hook.json), [validator](server/validate_motd_payload_sfx.py) |
+| Trigger | Route the webhook to a function and wait for its result | [Webhook trigger](artefacts/triggers/motd_trigger.json) |
+| [Server function](https://docs.polyapi.io/functions/server_functions.html) | Coordinate the request, validate direct calls, and choose the response | [motd_server](server/motd_server_sfx.py) |
+| [Client function](https://docs.polyapi.io/generated_sdks/client_functions.html) | Select an API by mood and check its result | [motd_client](client/motd_client_cfx.py) |
+| API Functions | Make the outbound joke/advice HTTP calls through PolyAPI | [Joke spec](artefacts/specs/motd/joke_api.json), [advice spec](artefacts/specs/motd/advice_api.json) |
+| [Vari](https://docs.polyapi.io/vari_variables/code.html) | Demonstrate protected injection and readable configuration | [SECRET joke config](artefacts/vari/joke_api_config.json), [OBSCURED advice config](artefacts/vari/advice_api_config.json) |
+| Error handler and job | Explore failure handling and scheduled calls | [Error handler](server/motd_error_handler_sfx.py), [error trigger](artefacts/triggers/motd_error_trigger.json), [job](artefacts/jobs/motd_job.json) |
+
+Other supported resources include reusable schemas, **Tabi** structured tables,
+**AI functions**, **Canopy** hosted applications, and **GraphQL subscriptions**.
+This sample embeds its webhook schema inline, uses no Tabi table or subscription,
+and adds weather AI only after the message workflow works. See the resource
+guide above when choosing what your own integration needs.
+
+## Run your first request
+
+### 1. Confirm setup and namespace
+
+Use a development environment with permission to manage the sample resources,
+generate the SDK, and execute functions. `TARGET_ENV_ID` pins the selected Flow
+environment file to the intended PolyAPI environment; it is separate from the
+namespace below. Kickstart and `flow setup` save this verified ID. For manual
+setup or a mismatch, follow [target pinning](../../../docs/SETUP.md#pin-the-target-environment).
+
+Before continuing, use the project's [pinned Python SDK](../../../docs/SETUP.md#python-sdk-version-and-target)
+and complete `flow setup` for the intended instance. Kickstart already installs
+the pinned SDK and configures the connection. Python does not use the
+TypeScript `polyapi@na2` package-tag command; review any required Python SDK
+version change separately from choosing the target.
+
+This tutorial assumes you are using `example` as your namespace in
+`workflows/dev.env`. **Check this setting in the file**, rather than entering it
+as a terminal command:
+
+```env
+POLYAPI_NAMESPACE=example
+```
+
+A namespace groups your project's functions and other resources in PolyAPI.
+The names in this tutorial must match that setting: for example,
+`example.sample_workflow` belongs to the `example` namespace.
+
+If you used **kickstart**, this guide and the sample files already use the
+namespace you chose. You can continue with those values.
+
+If you set up manually and chose a different namespace, follow the
+[manual namespace setup](../../../docs/SETUP.md#configure-a-deployment-target-manually)
+before continuing. It updates the starter code and tutorial examples to match.
+Changing `POLYAPI_NAMESPACE` in `dev.env` alone does not update those files.
+For an existing customized or deployed project, see
+[changing a namespace](../../../docs/CONVENTIONS.md#ownership-and-references).
+
+**In your terminal**, select your environment file once per session:
 
 ```bash
-source cli/shell/flow.bash
-flow setup
+export ENVPATH=workflows/dev.env
 ```
 
-If you used kickstart, this setup is already complete; rerun it only to change
-targets. Otherwise, setup creates and activates `.venv`, runs the SDK's setup prompts, verifies
-the key with `/whoami`, and shows the tenant and environment names. Confirm
-the suggested `workflows/dev.env` or `workflows/prod.env`; an unclear name
-defaults to dev. Setup offers to create a missing file from the placeholder
-example and optionally save the shell helper. It also configures VS Code.
+Use your setup-selected file if different. Python Flow resolves this path from
+the project root; it does not automatically look inside `workflows/` for a bare
+`dev.env`. Exporting the path selects the file for Flow; it does not export that
+file's contents into your shell.
 
-An environment is a separate resource catalog inside a tenant. A filename
-such as `dev.env` is only a local convention: the URL and key select the actual
-target. Renaming a file never changes the key's permissions or environment.
-Read [managing environments](https://docs.polyapi.io/environments/ui.html).
-
-For a different target, rerun `flow setup` with its instance URL and key,
-check the displayed identity, and confirm the desired file. Any instance can
-be used, including dev, EU1, NA1, or NA2. The relevant settings are:
-
-| Setting | Meaning |
-| --- | --- |
-| `POLY_API_BASE_URL` | Optional override of the instance URL saved by SDK setup |
-| `POLY_API_KEY` | Optional override of the environment key saved by SDK setup |
-| `TARGET_ENV_ID` | The verified environment ID; Flow rejects a mismatch |
-| `POLY_EXEC_API_KEY` | The execution identity for deployed server functions |
-| `POLYAPI_NAMESPACE` | The context root this project owns, initially `example` |
-
-Flow reuses the connection saved by native SDK setup; new env files do not
-duplicate the URL or key. Keep credentials in SDK setup or ignored local files.
-Do not commit them, paste them
-into commands, or reuse a development execution key in production. Setup clears
-the saved execution key when the target changes. Add the correct key locally
-before deploying server functions.
-
-Before training or deploying, use a development target and a branch based on
-`develop`. For a fresh template-generated repository with only `main`:
+**In your terminal**, check the sample locally:
 
 ```bash
-git switch -c develop
-git switch -c feature/my-workflow
+uv run --locked pytest workflows/src/sample_workflow/tests/test_motd.py
 ```
 
-If `develop` already exists locally, use `git switch develop` instead of creating
-it; if it exists only on the remote, use `git switch --track origin/develop`.
-Then create your feature branch from it. Use your project's feature-branch naming
-convention. The example configuration binds `develop` and its descendants to
-`workflows/dev.env`. Staying on `main`, or branching directly from it, triggers
-production safeguards even when the selected file is `workflows/dev.env`.
-`flow setup` selects the environment; it does not change Git branches.
+**Checkpoint:** local checks pass without credentials. They verify Python logic
+with mocked SDK boundaries, not deployed PolyAPI behavior.
 
-To explicitly use a configured file for a single command:
+### 2. Train the two outbound APIs
+
+An OpenAPI specification describes an HTTP API. Training makes that API
+available as functions your workflow can call. Train **both** bundled
+specifications: the client function refers to both APIs even though your first
+request will use only advice.
+
+**In your terminal**, preview the two bundled API descriptions:
 
 ```bash
-ENVPATH=workflows/dev.env uv run --locked python cli/flow.py push --paths sample_workflow --dry-run
-ENVPATH=workflows/prod.env uv run --locked python cli/flow.py push --paths sample_workflow --dry-run
+uv run --locked python -m cli.operations train-openapi workflows/src/sample_workflow/artefacts/specs/motd --context example.sample_workflow --disable-ai --dry-run
 ```
 
-Production branch, identity, execution-key and OTP checks still apply. See the
-[Flow reference](../../../cli/README.md) before a production deployment.
+**Check the preview:** it should list `advice_api.json` and `joke_api.json` in
+your `example.sample_workflow` context. This command checks local inputs only;
+it does not create functions in PolyAPI.
 
-## 4. Choose your context and run offline checks
-
-The sample uses `example.sample_workflow`; shared utilities use
-`example.utilities` (with separate configuration and diagnostic contexts). Replace `example` consistently in source SDK calls,
-`polyConfig`, JSON references, names/slugs, and the selected env file. Follow
-the root [customization guide](../../../README.md) and
-[conventions](../../../CONVENTIONS.md). Changing only `POLYAPI_NAMESPACE` does
-not rewrite source or move existing remote resources.
+**In your terminal**, register both APIs once the preview is correct:
 
 ```bash
-rg -n '\bexample\b' workflows/src designs/examples
-make check
+uv run --locked python -m cli.operations train-openapi workflows/src/sample_workflow/artefacts/specs/motd --context example.sample_workflow --disable-ai
 ```
 
-Checks run without credentials and do not deploy. Keep `example` in the commands
-below only if it is still your chosen namespace.
+Real training verifies the target, translates each spec with a `hostUrl`
+argument, saves its model, creates the API Functions, and regenerates the SDK.
+`--disable-ai` skips optional AI-generated descriptions and names, retaining
+the translator's names. Training does not call the joke or advice provider.
 
-## 5. Train the message APIs
+**Checkpoint — files:** the command prints `Saved model:` for these new files
+next to the original API descriptions. A **model** is the generated JSON
+description of the resources PolyAPI will register. Open each file in your
+editor and check the `name` and `context` in its `functions` array:
 
-Training converts an OpenAPI specification into PolyAPI catalog functions.
-The Python tooling handles translation, optional AI metadata enrichment,
-training, and SDK regeneration; no Node tooling or `train_oas.sh` is needed.
-See [OpenAPI training](https://docs.polyapi.io/api_functions/openapi.html).
+| Generated file, relative to the project root | Expected function name | Expected context |
+| --- | --- | --- |
+| `workflows/src/sample_workflow/artefacts/specs/motd/joke_api.poly.json` | `getRandomJoke` | `example.sample_workflow` |
+| `workflows/src/sample_workflow/artefacts/specs/motd/advice_api.poly.json` | `getRandomAdvice` | `example.sample_workflow` |
 
-Start with an offline preview, then train the two public APIs:
+**Checkpoint — SDK:** open the generated definitions using the
+[SDK file locations](OVERVIEW.md#training-and-sdk-reference). The expected calls are
+`poly.example.sample_workflow.getRandomJoke_async(hostUrl)` and
+`poly.example.sample_workflow.getRandomAdvice_async(hostUrl)`, as used in
+[motd_client](client/motd_client_cfx.py). Each definition should have a `hostUrl`
+argument. If either name is missing, check the training output and model files,
+then repeat the [SDK generation command](OVERVIEW.md#training-and-sdk-reference) for the
+same environment before continuing. An offline preview alone cannot generate
+these definitions. See the same reference if models already exist when you retry.
+
+### 3. Preview and deploy the workflow
+
+If your selected environment file sets `POLY_DEPLOY_SKIP_PATHS`, remove
+`workflows/src/sample_workflow` from that list before this lesson's deployment.
+An excluded parent folder also prevents deployment, and `--paths` does not
+override exclusions. See [skipping samples](../../../docs/SETUP.md#skip-sample-deployments)
+for how to exclude them again after learning.
+
+Use a branch based on `develop`; see [development branches](OVERVIEW.md#development-branches)
+if your checkout is not already configured. **In your terminal**, preview this
+sample's deployment. The explicit resource types leave optional weather AI out
+until its tools and provider are configured:
 
 ```bash
-ENVPATH=workflows/dev.env uv run --locked python -m cli.operations train-openapi workflows/src/sample_workflow/artefacts/specs/motd --context example.sample_workflow --disable-ai --dry-run
-ENVPATH=workflows/dev.env uv run --locked python -m cli.operations train-openapi workflows/src/sample_workflow/artefacts/specs/motd --context example.sample_workflow --disable-ai
+uv run --locked python cli/flow.py push-dynamic --paths sample_workflow --types functions,variables,schemas,webhooks,triggers,jobs --dry-run
 ```
 
-`--disable-ai` keeps the operation names used by this sample and avoids needing
-an AI provider for the first walkthrough. It does not disable AI functions.
-Saved `.poly.json` models are reviewable. To retrain one, use `train-model`;
-existing files are protected unless `--overwrite-model` is explicit. AI
-enrichment remains available when the flag is omitted; review renamed calls
-before changing the sample. See [training options](../../../cli/README.md#openapi-training-cleanup-and-logs).
+**Check the preview:** confirm the intended environment and namespace. The plan
+should include the sample's two variables, four functions, webhook, two
+triggers, and disabled job. `push-dynamic` also rebuilds local server functions
+that use a changed client function, so check any additional planned changes.
 
-## 6. Preview and deploy the message workflow
-
-Deploy the core resources first; leave AI out until its provider is configured:
+**In your terminal**, deploy the workflow once the plan is correct:
 
 ```bash
-flow push-dynamic --paths sample_workflow --types functions,variables,schemas,webhooks,triggers,jobs --dry-run
-flow push-dynamic --paths sample_workflow --types functions,variables,schemas,webhooks,triggers,jobs
+uv run --locked python cli/flow.py push-dynamic --paths sample_workflow --types functions,variables,schemas,webhooks,triggers,jobs
 ```
 
-Read the plan and target before confirming. `push-dynamic` includes affected
-server consumers of changed client functions. Its scope can extend beyond the
-initial path. A successful dry run is not proof of deployed behavior.
+Flow verifies the environment for both commands and normally regenerates the
+SDK after deployment.
 
-In Canopy, set `example.sample_workflow.joke_api_config` to the SECRET object
-`{"hostUrl":"https://official-joke-api.appspot.com"}`. The advice configuration
-starts with its public host as OBSCURED. These public hosts demonstrate two
-different secrecy behaviors; no upstream API account is required.
-Use the UI to enter the object-valued secret. See the
-[runtime overview](OVERVIEW.md#training-and-configuration) for injection details.
+**Checkpoint:** deployment completes without errors. In Canopy, select the same
+environment and confirm the resources appear under `example.sample_workflow`.
+Your first request uses `wise`, which reads the public host already stored in
+`advice_api_config`. You can configure the joke branch's secret
+[after this first request](#5-configure-injection-and-try-a-joke).
 
-The client passes the SECRET injection reference directly into the generated
-API call. It never reads or caches that secret. Do not replace this with direct
-HTTP execution or pass the reference through another client function.
+### 4. Invoke the advice path
 
-## 7. Invoke and inspect the result
+**In Canopy**, select the environment used for deployment and open the webhook
+named `motd` under `example.sample_workflow`. Copy its **full URL**, including the
+environment subdomain; do not build it from the gateway base URL or the path in
+its JSON file. These direct HTTP requests use the URL and key you supply; they
+do not run Flow's target check.
 
-Find the deployed webhook in Canopy and copy its actual URL, including the
-environment subdomain. Send a POST with your authorized PolyAPI key and this
-JSON body using the UI or your API client:
+**In your terminal**, run these prompts. Paste the complete deployed webhook
+URL and a PolyAPI key for that same environment, pressing Enter after each.
+The key stays hidden while you enter it:
+
+```bash
+printf 'Paste the full deployed webhook URL: '
+read -r POLY_TEST_WEBHOOK_URL
+printf 'Paste the PolyAPI key for that environment: '
+stty -echo; read -r POLY_API_KEY; stty echo
+printf '\n'
+```
+
+These prompts work in both Bash and zsh (the macOS default).
+
+These values stay in this shell session; do not save them in tracked files.
+A value in an env file does not automatically become a shell variable. If you
+prefer env-file loading, use the [live test command](OVERVIEW.md#verification) after
+configuring both moods.
+
+**In your terminal**, send the request from the same session. `curl -i` shows
+the HTTP status as well as the JSON body:
+
+```bash
+curl -i -X POST "$POLY_TEST_WEBHOOK_URL" \
+  --header 'Content-Type: application/json' \
+  --header "Authorization: Bearer $POLY_API_KEY" \
+  --data '{ "name": "Ada", "mood": "wise" }'
+```
+
+Expect HTTP 200 and a body with this shape; the advice text varies:
 
 ```json
-{"name":"Reader","mood":"wise"}
+{ "statusCode": 200, "message": "Hi Ada! <advice returned by the provider>" }
 ```
 
-Expect HTTP 200 with a greeting and advice. Try `funny` for a joke. Invalid
-input should be rejected; check the runtime overview for handled error shapes.
-Inspect the function execution/logs in Canopy if it fails. Never paste keys or
-raw secret-bearing logs into a report.
+**Checkpoint:** the message starts with `Hi Ada!` and includes advice. Provider
+text changes between calls. You have exercised webhook → security function →
+trigger → server → client → trained API Function. Find `motd_server` in Canopy to
+inspect its logs; `motd_client` runs inside that server function and has no
+separate log stream. The advice configuration ships with its public host URL,
+so this path needs no extra provider account or secret.
 
-For the existing opt-in live test, set `POLY_TEST_WEBHOOK_URL` locally to that
-exact URL, then run:
+**Your first integration works.** You can stop here or continue below to learn
+how to use secrets and change the sample.
 
-```bash
-RUN_POLY_INTEGRATION=true uv run --locked --env-file workflows/dev.env pytest workflows/src/sample_workflow/tests/test_motd_integration.py
+### 5. Configure injection and try a joke
+
+This is an optional next step after the advice request succeeds.
+
+**In Canopy**, open `joke_api_config` under `example.sample_workflow` in the same
+environment. Set its value as an **Object**. Paste this JSON as the variable's
+value, not into your terminal:
+
+```json
+{ "hostUrl": "https://official-joke-api.appspot.com" }
 ```
 
-The scheduled job is deliberately disabled. Enable it in the target only when
-you want recurring execution and have verified the direct workflow first.
+This URL is public, but the sample deliberately stores it as `SECRET` to teach
+injection. Its JSON artefact has no value, so deployment alone does not populate
+it. The API Function receives the injected `hostUrl`; the client function does
+not read the secret itself. Use Canopy for this object-valued secret; see
+[Vari details](OVERVIEW.md#vari-details) for the Python SDK caveat.
 
-## 8. Add the optional weather AI
+Repeat the request from [step 4](#4-invoke-the-advice-path) with
+`"mood": "funny"` and the original `"name": "Ada"`. Expect HTTP 200 with a
+greeting that joins a joke's setup and punchline:
 
-The weather function is another resource in **this same sample workflow**.
-It has a separate invocation so the basic webhook works without an AI provider.
-Follow [weather setup](OVERVIEW.md#weather-ai) to configure the tenant provider,
-train `artefacts/specs/weather`, deploy `uplifting_weather`, and run its opt-in
-test. The weather APIs need no signup or trial for evaluation; AI execution
-still requires a configured provider and may incur charges.
+```json
+{ "statusCode": 200, "message": "Hi Ada! <setup> ... <punchline>" }
+```
 
-If upgrading an existing checkout, the former `example.sample_ai_fx` resources
-are not renamed remotely by moving files. Train and deploy the weather resources
-in `example.sample_workflow`, verify them, then separately review cleanup of the
-old context. This change does not delete existing platform resources.
+**Checkpoint:** `.inject("hostUrl")` passes an opaque reference to the API
+Function. The platform resolves it at that boundary; the client never reads
+the SECRET value.
 
-## 9. Build your own workflow
+## Try it yourself
 
-Create a sibling workflow with only the directories it needs. Define the input
-contract, write self-contained client/server functions, declare resources and
-portable references, and add focused tests. Keep generated SDK calls aligned
-with the deployed context/name. Never locally import a neighboring deployable
-function: Flow uploads each file independently.
+These exercises are optional. Start with the small greeting change, then explore
+the other behavior when you are ready.
 
-Run `make check`, review a scoped dry run, deploy to development, and verify
-the actual result before promoting. Use the [Flow reference](../../../cli/README.md)
-for resource selection, resume, generation, and cleanup. Cleanup is destructive:
-preview the exact disposable context with `delete-content` and review it before
-adding `--apply`; never delete shared tenant/provider configuration.
+- In [motd_server](server/motd_server_sfx.py), change the greeting from
+  `Hi` to `Hello`. Repeat the [deployment preview and push](#3-preview-and-deploy-the-workflow),
+  then send the [advice request](#4-invoke-the-advice-path) again. You should now see `Hello Ada!` followed by
+  the advice. Restore `Hi` and redeploy afterward so the checked-in tests and
+  response examples still match.
+- Change `Ada` to your name and switch between `wise` and `funny`. Trace the two
+  branches in [motd_client](client/motd_client_cfx.py).
+- Send a whitespace-only name or `"mood": "sleepy"`. Expect rejection before the
+  main server runs; inspect both the HTTP status and the platform's response.
+- Explain why advice uses a read while the joke uses injection. Neither value
+  is cached, and only one can be read by the client.
+- Read the [scheduled job](artefacts/jobs/motd_job.json). It calls the server
+  directly every 60 minutes with `Scheduler` / `wise`, bypassing webhook
+  security. The server therefore repeats input validation. Leave the job
+  disabled unless you intend recurring calls.
+- Read the mocked provider-failure cases in [the local tests](tests/test_motd.py).
+  Observe how failures become bounded messages without exposing raw errors.
 
-Continue with the [official tutorials](https://docs.polyapi.io/tutorials/index.html)
-and [documentation home](https://docs.polyapi.io/).
+## Continue building
+
+Follow the [optional weather AI lesson](OVERVIEW.md#weather-ai) in this same
+workflow to train its public tools and configure the AI provider. The core
+webhook does not need that setup. The [runtime reference](OVERVIEW.md) covers
+errors, scheduled calls, SDK generation, and live-test requirements.
+
+Create a sibling workflow for your own integration, keeping its inline metadata,
+artefacts, generated SDK calls, and tests aligned. Follow the
+[project conventions](../../../docs/CONVENTIONS.md) and
+[official tutorials](https://docs.polyapi.io/tutorials/index.html). Run `make check`,
+review a development deployment preview, and verify the deployed result before
+promoting. Review destructive cleanup separately; never delete shared provider
+configuration with a disposable sample namespace.

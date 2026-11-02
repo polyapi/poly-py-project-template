@@ -1,196 +1,464 @@
-# Sample workflow
+# Sample workflow runtime reference
 
-New to PolyAPI? Start with the [onboarding tutorial](README.md).
+Start with the [onboarding tutorial](README.md). This copy uses the `example`
+namespace; keep its source, artefacts, and generated SDK calls aligned.
 
-A message-of-the-day integration: a protected webhook and scheduled job call a
-server function, which calls a client function and one of two trained external
-API functions through the Python SDK.
+## Runtime reference
+
+The remaining sections are reference material for understanding or extending the
+working sample; they are not extra steps needed for your first request.
+
+### Request and response
 
 ```mermaid
-flowchart LR
-    W[POST webhook] --> V[Payload security function]
-    V --> T[Synchronous trigger]
-    T --> S[motd_server]
+flowchart TD
+    W[Authenticated webhook] --> V[Security validation]
+    V -->|invalid| R[Platform rejection]
+    V -->|valid| T[Synchronous trigger]
+    T --> S[Server validates input]
     J[Disabled scheduled job] --> S
-    S --> C[motd_client]
-    C -->|funny: SECRET host injection| A[getRandomJoke API function]
-    C -->|wise: OBSCURED host read| B[getRandomAdvice API function]
-    S -->|client failure| E[motd_error_handler]
-    W -->|uncaught platform error| E
+    D[Direct SDK call] --> S
+    S -->|invalid| B[HTTP 400 and error body]
+    S -->|valid| C[Client selects mood]
+    C -->|funny| I[Inject SECRET host reference]
+    C -->|wise| O[Read and decode OBSCURED host]
+    I --> A[Call joke API Function]
+    O --> P[Call advice API Function]
+    A --> Q[Check status and required content]
+    P --> Q
+    Q -->|success| G[HTTP 200 and greeting]
+    Q -->|failure| E[Call error handler]
+    E -->|success| F[HTTP 500 and bounded message]
+    E -->|failure| U[Unhandled execution error]
+    X[Matching platform error event] --> H[Error trigger invokes handler]
+    H --> L[Log bounded diagnostic]
 ```
 
-`funny` calls the Official Joke API and joins `setup` and `punchline`.
-`wise` calls Advice Slip and returns `slip.advice`. Both reject non-2xx or
-malformed responses. The OpenAPI specifications are
-[joke_api.json](artefacts/specs/motd/joke_api.json) and
-[advice_api.json](artefacts/specs/motd/advice_api.json). Their operation IDs determine
-the initial API function names.
+The entrypoint accepts the event convention's three arguments: `event`, `headers`,
+and `params`. The webhook requires a PolyAPI key and declares a strict payload
+schema. Both the validator and server check the name and mood; the client also
+rejects an unsupported mood. API results must have a 2xx status and the expected
+nonempty fields: `setup` / `punchline` or `slip.advice`.
 
-## Training and configuration
+[The server](server/motd_server_sfx.py) explicitly sets
+`polyCustom.responseStatusCode` as well as returning a `statusCode` field. These
+are separate concepts: a JSON field alone would not set the HTTP status.
+Deployed objects use SDK-supported `Dict` annotations and local `TypedDict`
+responses. Mood is a string in the generated contract, checked at runtime.
 
-From the repository root, after configuring the target as described in the
-root README:
+Each deployable Python file keeps its `polyConfig` and runtime types inline.
+The webhook declares its payload schema in its JSON artefact; the sample does
+not use a separate schema artefact or persist workflow state in Tabi tables.
 
-```bash
-ENVPATH=workflows/dev.env uv run --locked python -m cli.operations train-openapi workflows/src/sample_workflow/artefacts/specs/motd --context example.sample_workflow --disable-ai --dry-run
-ENVPATH=workflows/dev.env uv run --locked python -m cli.operations train-openapi workflows/src/sample_workflow/artefacts/specs/motd --context example.sample_workflow --disable-ai
-ENVPATH=workflows/dev.env uv run --locked python cli/flow.py push --paths sample_workflow --types functions,variables,schemas,webhooks,triggers,jobs --dry-run
-ENVPATH=workflows/dev.env uv run --locked python cli/flow.py push --paths sample_workflow --types functions,variables,schemas,webhooks,triggers,jobs
-```
+### Error handling
 
-Training translates the specs with `hostUrlAsArgument=hostUrl`, optionally enriches
-metadata when `--disable-ai` is omitted, saves reviewable `.poly.json`
-models, upserts their schemas/API functions/webhooks, and regenerates the Python
-SDK. The sample calls `getRandomJoke` and `getRandomAdvice`; generated async calls
-append `_async`. Use `--generate-only` to review AI output before training. If
-names change, align the model with these expected names using `--rename FROM TO`
-on regeneration, or update the sample's SDK calls to the chosen names.
+[The error handler](server/motd_error_handler_sfx.py) preserves only bounded
+messages and safe function names; arbitrary transport details and event bodies
+are not returned or logged. The server's handled HTTP 500 depends on that handler
+call succeeding. Its own failure remains unhandled.
 
-After the Vari artefacts exist, set `example.sample_workflow.joke_api_config` in
-Canopy to `{"hostUrl":"https://official-joke-api.appspot.com"}`. This public URL
-is deliberately stored as SECRET to demonstrate secret injection. Its real
-value never enters the client function: `.inject("hostUrl")` goes
-unchanged into `getRandomJoke_async`. Direct API execution is rejected for this
-path because it cannot resolve injected references.
+[The error trigger](artefacts/triggers/motd_error_trigger.json) separately selects
+platform failures on the webhook path. Its delivery is distinct from the direct
+call in the server's `except` block and needs deployed verification.
 
-Use Canopy to set this object-valued secret. Generated Vari
-`update()` / `update_async()` methods form-encode Python dictionaries instead
-of sending JSON objects; they do not preserve this configuration correctly.
+### Scheduled calls
 
-`example.sample_workflow.advice_api_config` is OBSCURED and initially contains
-`{"hostUrl":"https://api.adviceslip.com"}`. OBSCURED permits runtime reads while
-masking the UI. Python's `get_async()` returns JSON text, so the client decodes
-it on every request. Neither configuration nor the injected reference is cached.
-No account or API key is needed for these two upstream public APIs.
+The [scheduled job](artefacts/jobs/motd_job.json) starts disabled. When enabled,
+it calls `motd_server` directly every 60 minutes with `name: "Scheduler"` and
+`mood: "wise"`, plus empty headers and parameters. It does not pass through the
+webhook or its security function, so the server repeats input validation.
 
-## Runtime contract
-
-Deployed object arguments use SDK-supported `Dict` annotations, and response
-objects use local `TypedDict` definitions. Mood is a string in the generated
-contract; both the webhook validator and client enforce `funny` or `wise` at
-runtime. Native SDK payload tests verify these argument and return schemas.
-
-Send `{"name":"Reader","mood":"wise"}` to the deployed
-`/apis/example-motd/motd` webhook with the target's PolyAPI authorization.
-Success returns HTTP 200 and `{"statusCode":200,"message":"Hi Reader! <advice>"}`.
-
-- The webhook requires a PolyAPI key and declares a strict payload schema.
-- `validate_motd_payload` checks the name and mood before the trigger runs.
-- `motd_server` also validates direct calls; invalid input returns HTTP 400.
-- Client failures call the generated `motd_error_handler_async` server function
-  and return HTTP 500 with its normalized message.
-- The handler retains bounded API status messages; unknown transport errors and
-  arbitrary event bodies are not exposed in responses or logs.
-- The error trigger covers uncaught failures on this webhook path.
-- `example_motd` starts disabled and uses `Scheduler` / `wise` input when enabled.
+Leave the job disabled while following this tutorial. If you later want
+recurring calls, set its `enabled` field to `true` and repeat the
+[deployment preview and push](README.md#3-preview-and-deploy-the-workflow). Review its
+execution results separately from the webhook response: a job has no HTTP caller.
 
 ## Verification
 
+Run the local tests from [step 1](README.md#1-confirm-setup-and-namespace) after edits. They check the runtime branches,
+including that the opaque injection reference reaches the API boundary unchanged.
+The separate [preflight tests](../../../cli/tests/test_preflight.py) also check
+native SDK payload schemas. Neither proves live secret resolution.
+
+The live test makes two HTTP calls, one per mood. If you are reusing the URL
+and key entered at the prompts in step 4, first make them available to the test
+process:
+
 ```bash
-uv run --locked pytest workflows/src/sample_workflow/tests/test_motd.py
-RUN_POLY_INTEGRATION=true uv run --locked --env-file workflows/dev.env pytest workflows/src/sample_workflow/tests/test_motd_integration.py
+export POLY_TEST_WEBHOOK_URL POLY_API_KEY
 ```
 
-The live tests require `POLY_TEST_WEBHOOK_URL`, a configured secret, and deployed
-API functions/workflow resources. Use the webhook `url` from PolyAPI or Canopy,
-including its environment subdomain; the gateway base URL alone will not route
-webhook execution. Unit tests assert the opaque injection reference
-reaches the generated API boundary by identity; that proves caller behavior,
-not live platform resolution.
+Then run the test:
+
+```bash
+RUN_POLY_INTEGRATION=true uv run --locked --env-file "$ENVPATH" pytest workflows/src/sample_workflow/tests/test_motd_integration.py
+```
+
+It requires deployed resources, the configured joke secret, `POLY_TEST_WEBHOOK_URL`,
+and `POLY_API_KEY` in the test process or the selected ignored env file. This HTTP
+test does not reuse the SDK's saved key, accept Flow's `API_KEY` alias, or verify
+`TARGET_ENV_ID`. Confirm the URL and key belong to the intended environment.
+The test does not cover invalid requests, the scheduled job, or error-trigger
+delivery.
+
+## Troubleshooting
+
+| Symptom | Check |
+| --- | --- |
+| Generated function missing | Confirm training, namespace, and generation all used the same environment; inspect the translated names. |
+| Target mismatch | Check the selected Flow file and authenticated identity; preserve the target pin. |
+| `wise` works, `funny` fails | Set the SECRET Object value in Canopy and use normal API execution, not direct execution. |
+| Advice configuration error | Confirm the OBSCURED object contains a nonempty `hostUrl`. |
+| Request rejected | Check the full deployed URL, matching key, nonblank name, and allowed mood. |
+| HTTP 500 from the server | Inspect its bounded error message and handler logs; check provider status and required fields. |
+| Model already exists | Inspect and train the saved `.poly.json` model, or deliberately regenerate with `--overwrite-model`. |
+
+## Training and SDK reference
+
+The specs' operation IDs declare the expected API names. Optional AI enrichment
+can change names, descriptions, and arguments; omit `--disable-ai` only when you
+intend to review those changes. `--generate-only` saves a translated model for
+review but still calls the platform and, unless disabled, its AI enrichment
+service. Use `train-model` to train a saved model. Regeneration requires
+`--overwrite-model`; `--rename FROM TO` can align changed names during generation.
+See [Flow training](../../../cli/README.md#openapi-training-cleanup-and-logs).
+
+Flow normally generates the SDK after relevant pushes. For a separate refresh,
+first confirm the native SDK connection, then run:
+
+```bash
+uv run --locked --env-file "$ENVPATH" python -m polyapi generate
+```
+
+This native command uses saved SDK setup or canonical `POLY_API_BASE_URL` /
+`POLY_API_KEY` overrides. It does not resolve Flow's other aliases or enforce
+`TARGET_ENV_ID`.
+
+To inspect the generated function definitions in your editor, open
+`.venv/lib/python3.12/site-packages/polyapi/poly/<namespace folders>/sample_workflow/__init__.py`
+on macOS/Linux, or
+`.venv/Lib/site-packages/polyapi/poly/<namespace folders>/sample_workflow/__init__.py`
+on Windows. Replace `<namespace folders>` with your namespace; for a dotted
+namespace such as `acme.integrations`, use `acme/integrations`. Look for
+`getRandomAdvice_async` and `getRandomJoke_async`, each with a `hostUrl` argument.
+These files are generated by the SDK; change the source API descriptions and
+regenerate instead of editing them directly.
+
+### Vari details
+
+Vari secrecy levels control how code and humans can access a stored value.
+The platform supports `NONE`, `OBSCURED`, `SECRET`, and `PARTIAL`; this sample
+uses two levels to demonstrate the difference, even though both values are
+public API base URLs.
+
+The [joke config](artefacts/vari/joke_api_config.json) is SECRET. Its `.inject()`
+reference must go unchanged into `getRandomJoke_async`; normal API execution
+resolves it, while the sample rejects direct API execution for this path.
+In the pinned SDK 0.3.21.dev1, generated Vari `update()` / `update_async()` methods
+form-encode Python dictionaries, so use Canopy to preserve this Object value.
+
+The [advice config](artefacts/vari/advice_api_config.json) is OBSCURED and starts
+with `{ "hostUrl": "https://api.adviceslip.com" }`. It permits runtime reads while
+masking the UI. `get_async()` returns JSON text, decoded on every request.
+Neither configuration nor the injection reference is cached. Both upstream APIs
+are public and need no account or API key.
+
+### Development branches
+
+Kickstart creates `develop`. For a manual checkout, create it once from `main`
+with `git switch -c develop main` if needed. To start a feature:
+
+```bash
+git switch develop
+git switch -c feature/my-workflow
+```
+
+The example configuration binds `develop` to `workflows/dev.env`; branches based
+directly on `main` use production safeguards. See
+[dependency-aware deployments](../../../cli/README.md#dependency-aware-deployments)
+for named functions, nested consumers, exclusions, and interrupted-run recovery.
+
+A full push also includes [common utilities](../utilities/common/OVERVIEW.md) and
+[Weather AI](#weather-ai). Configure their dependencies before
+invoking them. The common error trigger starts enabled; the sample job starts
+disabled. Canopy and subscription starters stay in
+[designs/examples](../../../designs/examples/) until configured and moved into a
+workflow's `artefacts/` folder.
 
 ## Weather AI
 
-`example.sample_workflow.uplifting_weather` accepts a city or town in `location`
-and optional `activity`. It calls `searchLocations` for coordinates, then
-`getCurrentWeather` for current conditions, and returns practical guidance.
-Both tools use [Open-Meteo](https://open-meteo.com/), with no weather account,
-API key, or trial needed for evaluation.
+Ask for current weather and practical advice for an activity. This lesson shows
+how an AI Function combines **tool-provided facts**, **fixed configuration**, and
+**generated guidance** in a structured result.
 
-The public API supports evaluation and non-commercial use. Review
-[Open-Meteo's terms and commercial plans](https://open-meteo.com/en/pricing)
-before production use. The target still needs the AI provider/model selected in
-[the AI artefact](artefacts/ai-functions/uplifting_weather.json); AI execution can
-incur provider charges. Configure the tenant provider before running the AI test.
+Complete [Getting started](../../../README.md#getting-started) first. If you are
+new to API training and the generated SDK, start with
+[Message of the day](README.md). Run commands from the project
+root in Bash.
 
-### Configure the AI provider
+Coding-agent skills are optional for this lesson. Kickstart installs them;
+manual checkouts already include the core Python skills. See the
+[skills guide](../../../docs/SETUP.md#agent-skills) for the broader collection.
 
-The sample uses OpenAI through the PolyAPI tenant configuration:
+### What you will learn
 
-1. Have a tenant administrator store the OpenAI API key as a **SECRET string
-   Vari** in the selected tenant. Keep shared provider configuration outside
-   this sample's disposable namespace.
-2. Set the tenant's `OpenAITenantApiKey` configuration to that Vari's UUID.
-   The value is the variable ID, not the provider key. The administrative API
-   is `PATCH /tenants/{tenantId}/config-variables/OpenAITenantApiKey` with JSON
-   body `{"value":"<SECRET_VARI_UUID>"}`. It requires a user-bound PolyAPI key
-   with `ManageTenant` permission and a current `x-otp` MFA code.
-3. Confirm the OpenAI project has API credits and access to the configured model.
+The function accepts a required `location` and optional `activity`. It searches
+for coordinates, asks a weather API for current conditions, then generates
+activity-aware guidance. The tools use Open-Meteo and need no weather account or
+API key for evaluation. The AI Function still requires configured OpenAI access
+and can incur provider charges.
 
-Keep the provider key in Vari; it does not belong in the local environment file
-or AI artefact. The weather tools themselves need no credentials.
+| Part of the lesson | Purpose | Source |
+| --- | --- | --- |
+| Location tool | Convert a place name into candidate coordinates | [Geocoding spec](artefacts/specs/weather/geocoding_api.json) |
+| Weather tool | Fetch current conditions at the selected coordinates | [Weather spec](artefacts/specs/weather/weather_api.json) |
+| AI Function | Define inputs, prompt, allowed tools, fixed arguments, and result shape | [uplifting_weather](artefacts/ai-functions/uplifting_weather.json) |
+| Contract tests | Check the local bindings and output schema | [Local tests](tests/test_weather_contract.py) |
+| Runtime test | Invoke one deployed example and check its result | [Integration test](tests/test_weather_integration.py) |
 
-A missing tenant configuration returns `403`. A provider failure can appear to
-the caller as a generic `500`; inspect the AI execution logs and correlate their
-execution ID and timestamp with gateway logs. An upstream `401` indicates an
-invalid key, while a `429` stating no credits remain requires billing attention.
-Do not retry that quota failure until the provider account is funded or the
-administrator replaces the Vari value with a funded project's key. Do not copy
-provider key fragments from logs into reports.
+### Run the lesson
 
-### Train the weather tools
+#### 1. Confirm the prerequisites
 
-Configure the target and replace `example` with your namespace as described in
-the root README. From the repository root:
+Use the target configured during setup and ask its administrator to confirm
+OpenAI provider access and the model named in the AI artefact (`gpt-5.5`). If it
+is not configured, use [provider setup](#provider-setup-reference) below before
+invoking the function.
 
-```bash
-ENVPATH=workflows/dev.env uv run --locked python -m cli.operations train-openapi workflows/src/sample_workflow/artefacts/specs/weather --context example.sample_workflow --dry-run --disable-ai
-ENVPATH=workflows/dev.env uv run --locked python -m cli.operations train-openapi workflows/src/sample_workflow/artefacts/specs/weather --context example.sample_workflow --disable-ai
-```
+The context root must match `POLYAPI_NAMESPACE`. Kickstart updates the sample,
+utilities, and copied tutorial examples to your chosen root. This copy uses
+`example`. For a fresh manual checkout, run the local namespace-alignment step in
+[manual setup](../../../docs/SETUP.md#configure-a-deployment-target-manually)
+to update the starter code, artefacts, and examples together. Changing the
+environment variable alone is insufficient. For already-customized or deployed
+projects, follow [ownership and references](../../../docs/CONVENTIONS.md#ownership-and-references).
 
-The bundled [geocoding spec](artefacts/specs/weather/geocoding_api.json) and
-[weather spec](artefacts/specs/weather/weather_api.json) define the exact tool names and
-arguments used by the AI artefact. PolyAPI translates the provider query name
-`temperature_unit` to the generated argument `temperatureUnit`; the binding uses
-that generated name. `--disable-ai` skips optional training-time
-metadata enrichment to preserve those contracts; it does not disable the AI
-sample. Training saves `.poly.json` models next to the specs and regenerates the
-Python SDK. To retrain a saved model, use `train-model` as documented in the
-[Flow reference](../../../cli/README.md#openapi-training-cleanup-and-logs).
-
-### Deploy and invoke
-
-The tools and AI function live in the same project namespace. The AI supplies
-only the location search text and returned coordinates; fixed argument bindings
-select public hosts, Celsius, and the required weather fields. No weather Vari
-or provider secret is required.
+Select your setup-configured file once per terminal session:
 
 ```bash
-ENVPATH=workflows/dev.env uv run --locked python cli/flow.py push --paths sample_workflow --types ai-functions --dry-run
-ENVPATH=workflows/dev.env uv run --locked python cli/flow.py push --paths sample_workflow --types ai-functions
+export ENVPATH=workflows/dev.env
 ```
 
-The structured result contains `location`, `currentWeather`, `description`,
-`recommendedItems`, `upliftingMessage`, and `attribution`. Display the attribution
-with the result: weather data comes from Open-Meteo under CC BY 4.0 and location
-data from GeoNames. Recommendations are AI-generated. Current conditions are
-model-based estimates, not station observations or official alerts.
+Python Flow resolves relative paths from the project root. Use the full
+`workflows/dev.env` path, or the selected file if different. Direct SDK calls
+below load that same file explicitly with `uv --env-file "$ENVPATH"`.
 
-If the tools find no location or usable weather, the prompt requests
-`currentWeather: null`, an explanation, and no recommended items. Execution or
-provider errors can still propagate to the caller; callers should handle them.
+Keep the intended environment's `TARGET_ENV_ID` in that file. Kickstart and
+`flow setup` save this pin; it is separate from your namespace and does not
+change your login. See [target pinning](../../../docs/SETUP.md#pin-the-target-environment)
+for manual setup or a mismatch.
 
-### Verify
+Use the project's [pinned Python SDK](../../../docs/SETUP.md#python-sdk-version-and-target)
+and configured connection before this lesson. Kickstart installs that pin for
+every region; it does not select SDK packages using TypeScript's instance tags.
 
-Local tests validate the tool/spec bindings and output contract without network
-calls or provider credentials:
+Run the local contract checks:
 
 ```bash
 uv run --locked pytest workflows/src/sample_workflow/tests/test_weather_contract.py
 ```
 
-The deployed test calls the generated Python SDK. It needs both explicit opt-ins
-because the AI call can incur provider usage:
+**Checkpoint:** these tests pass without credentials. They verify the checked-in
+contracts, not the remote translator, model behavior, or weather accuracy.
+
+#### 2. Train the weather tools
+
+Preview the bundled specifications, then train them:
 
 ```bash
-RUN_POLY_INTEGRATION=true RUN_AI_INTEGRATION=true uv run --locked --env-file workflows/dev.env pytest workflows/src/sample_workflow/tests/test_weather_integration.py
+uv run --locked python -m cli.operations train-openapi workflows/src/sample_workflow/artefacts/specs/weather --context example.sample_workflow --dry-run --disable-ai
+uv run --locked python -m cli.operations train-openapi workflows/src/sample_workflow/artefacts/specs/weather --context example.sample_workflow --disable-ai
 ```
+
+The preview checks local inputs only. Real training verifies the target, saves
+`.poly.json` models beside the specs, registers the tools, and regenerates the
+Python SDK. `--disable-ai` skips optional metadata enrichment; it does not disable
+the AI Function you will invoke later.
+
+**Checkpoint:** inspect the translated models for `searchLocations` and
+`getCurrentWeather` in your namespace. Match their argument keys to the AI
+artefact. In particular, the weather binding expects `temperatureUnit`, translated
+from the provider's `temperature_unit`. The offline preview cannot prove that
+translation. To retry saved models or deliberately regenerate them, follow
+[Flow training](../../../cli/README.md#openapi-training-cleanup-and-logs).
+
+#### 3. Deploy the AI Function
+
+If `POLY_DEPLOY_SKIP_PATHS` excludes `workflows/src/sample_workflow` or a parent
+folder, remove that exclusion in the selected environment file first. `--paths`
+does not override it. See [skipping samples](../../../docs/SETUP.md#skip-sample-deployments)
+for how to keep the lesson files while excluding them from normal pushes.
+
+```bash
+uv run --locked python cli/flow.py push --paths sample_workflow --types ai-functions --dry-run
+uv run --locked python cli/flow.py push --paths sample_workflow --types ai-functions
+```
+
+Review the target and plan before the real push. Flow verifies the environment
+and normally regenerates the SDK afterward. This push deploys the AI contract;
+training in step 2 creates its two outbound tools.
+
+**Checkpoint:** Canopy and the generated SDK contain
+`example.sample_workflow.uplifting_weather` under your chosen root, with `location`
+and optional `activity` arguments. The function is enabled, its two tools resolve,
+and the tenant's model provider is ready.
+
+#### 4. Ask for weather guidance
+
+The following direct SDK call uses its saved connection or canonical
+`POLY_API_BASE_URL` / `POLY_API_KEY` overrides from your selected file. It does
+not apply Flow's aliases or `TARGET_ENV_ID` check. Confirm that the generated
+bindings and connection are for the intended environment. Substitute your
+namespace in the Python call if different from `example`.
+
+```bash
+uv run --locked --env-file "$ENVPATH" python - <<'PY'
+import asyncio
+import json
+from polyapi import poly
+
+async def main():
+    result = await poly.example.sample_workflow.uplifting_weather_async(
+        "London, United Kingdom", "an outdoor walk"
+    )
+    print(json.dumps(result, indent=2))
+
+asyncio.run(main())
+PY
+```
+
+An illustrative response follows. The numbers and prose are examples, not a live
+weather report:
+
+```json
+{
+  "location": "London, United Kingdom",
+  "currentWeather": {
+    "condition": "Partly cloudy",
+    "temperature": 14,
+    "unit": "C"
+  },
+  "description": "A light layer may help during your walk.",
+  "recommendedItems": ["Light jacket", "Comfortable shoes"],
+  "upliftingMessage": "Enjoy a change of scenery on your walk!",
+  "attribution": "Weather data: Open-Meteo (https://open-meteo.com/), CC BY 4.0. Location data: GeoNames (https://www.geonames.org/). Guidance is AI-generated."
+}
+```
+
+**Checkpoint:** the result follows the declared schema and includes attribution.
+The location and weather fields should be grounded in tool data; the description,
+items, and uplifting message are AI-generated interpretations. A valid schema
+alone does not prove factual accuracy.
+
+### How the AI contract works
+
+```mermaid
+flowchart TD
+    R[SDK caller supplies location and activity] --> A[AI Function reads prompt]
+    A --> G[Search location tool]
+    G --> L{Matching location available}
+    L -->|no| N[Null weather and explanation]
+    L -->|yes| W[Weather tool with exact coordinates]
+    W --> C{Usable weather available}
+    C -->|no| N
+    C -->|yes| F[Interpret facts and generate guidance]
+    F --> O[Structured result with attribution]
+    N --> O
+    G -->|execution failure| E[Error to caller]
+    W -->|execution failure| E
+    A -->|provider failure| E
+```
+
+In [the AI artefact](artefacts/ai-functions/uplifting_weather.json):
+
+- `arguments` declares what callers supply. `inputTemplate` combines those inputs
+  into a request; `systemPrompt` defines the behavior and failure instructions.
+- `toolFunctions` limits the available tools. The AI selects search text and
+  coordinates; fixed bindings select provider hosts, Celsius, and weather fields.
+- `outputSchema` requires `location`, `currentWeather`, `description`,
+  `recommendedItems`, `upliftingMessage`, and `attribution`, with no extra keys.
+- If no location or usable weather is found, the prompt requests null weather,
+  an explanation, and no recommended items. Execution errors can still propagate
+  instead of producing that result; callers should handle them.
+
+This AI invocation uses the SDK directly; it does not use the message-of-the-day
+webhook, server functions, or scheduled job. It has no Tabi state.
+The two trained tools and AI Function live in the project namespace; shared
+provider configuration belongs outside its disposable resources.
+
+Display attribution with the result. Open-Meteo weather is model-based current
+estimates, not station observations, forecasts for a requested future date, or
+official alerts. Its public API supports evaluation and non-commercial use;
+review [the provider's terms and commercial plans](https://open-meteo.com/en/pricing)
+before production use.
+
+### Try it yourself
+
+- Keep the location fixed and change the activity to cycling. Expect the same
+  output structure and activity-specific guidance; current measurements can
+  change between calls.
+- Omit the second argument. The optional activity should not be necessary for a
+  useful response. Confirm this behavior in your environment.
+- Use an ambiguous place name, then add its country. Inspect how the resolved
+  location changes and why the selected coordinates matter.
+- Trace `temperatureUnit` from the weather spec through the translated model to
+  its fixed binding. Changing that binding also requires aligning the prompt,
+  output schema, and tests; a schema is part of the contract.
+- Inspect the no-match instructions. A live exercise should check for null weather
+  and empty items rather than assume the model obeyed the prompt.
+
+### Verification and troubleshooting
+
+After the manual call, the opt-in deployed test checks one London/outdoor-walk
+response:
+
+```bash
+RUN_POLY_INTEGRATION=true RUN_AI_INTEGRATION=true uv run --locked --env-file "$ENVPATH" pytest workflows/src/sample_workflow/tests/test_weather_integration.py
+```
+
+Both flags are required because the call incurs provider usage. The test validates
+the schema, nonempty text, non-null weather, Celsius, and attribution. It does not
+check factual agreement with upstream measurements, no-match behavior, or tool
+failures. Like the direct SDK example, it does not enforce Flow's target pin.
+
+| Symptom | Check |
+| --- | --- |
+| Tool or SDK name missing | Confirm the namespace, translated names, training, and SDK generation for the same target. |
+| Tool arguments rejected | Compare the translated model with each `argumentConfig` key, especially `temperatureUnit`. |
+| Weather is null | Check the resolved location and tool results before treating it as a model problem. |
+| Permission or provider error | Ask the administrator to check AI execution access and tenant provider configuration. |
+| Generic server error | Correlate the AI execution ID and timestamp with gateway logs; a status alone does not establish the cause. |
+| Provider authentication or quota error | Distinguish authentication, rate limiting, and exhausted quota before retrying. |
+
+### Provider setup reference
+
+The sample uses OpenAI through PolyAPI's tenant configuration. Provider setup and
+permission to execute the AI Function are prerequisites; see the
+[platform AI guide](https://docs.polyapi.io/ai_functions/index.html).
+
+1. Have a tenant administrator store the OpenAI API key as a **SECRET string Vari**
+   in the selected tenant, outside this sample's disposable namespace.
+2. Set `OpenAITenantApiKey` to that Vari's UUID, not the provider key. Confirm the
+   configuration name and update contract in the selected instance's Swagger
+   before using `PATCH /tenants/{tenantId}/config-variables/OpenAITenantApiKey`
+   with `{"value":"<SECRET_VARI_UUID>"}`. This procedure is outside Flow and the
+   sample's tests; confirm its `ManageTenant`, user-key, and `x-otp` requirements.
+3. Confirm the OpenAI project has credits and access to the configured model.
+
+Keep the provider key in Vari, outside local env files and the AI artefact. The
+Open-Meteo tools need no weather-provider secret.
+
+For `403`, check execution permissions and tenant provider setup. For an upstream
+`401`, check provider authentication. Distinguish a rate-limit `429` from a
+quota/billing `429`; the latter needs account attention. See
+[OpenAI's error guide](https://developers.openai.com/api/docs/guides/error-codes).
+Exact gateway mappings depend on the target and are not verified by local tests.
+Do not copy provider key fragments from logs into reports.
+
+### Migrating the former AI sample
+
+Moving local files does not rename deployed resources. Existing checkouts may
+still have weather resources under `example.sample_ai_fx`. Train the tools and
+deploy the AI function in `example.sample_workflow`, regenerate the SDK, and
+verify that invocation before separately reviewing cleanup of the former
+context. This source change does not delete remote resources.
