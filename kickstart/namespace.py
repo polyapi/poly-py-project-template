@@ -78,6 +78,94 @@ def rewrite_python(source: str, namespace: str) -> str:
     return encoded.decode("utf-8")
 
 
+def rewrite_markdown_code(code: str, namespace: str) -> str:
+    """Personalize owned examples without changing domains or external paths."""
+    parts = re.split(r"((?:[a-z][a-z0-9+.-]*://|mailto:|git@)[^\s<>`\"']+)", code)
+    if len(parts) > 1:
+        return "".join(
+            part if index % 2 else rewrite_markdown_code(part, namespace)
+            for index, part in enumerate(parts)
+        )
+    if code.strip() == "example":
+        return code.replace("example", namespace)
+    code = re.sub(
+        r"(?<![\w.])POLYAPI_NAMESPACES?=example(?=$|[\s,\"'])",
+        lambda match: match[0].replace("=example", "=" + namespace),
+        code,
+    )
+    code = re.sub(
+        r"(?<![\w./:@-])(poly|vari|tabi|schemas)\.example(?=\.|\b)",
+        lambda match: match[1] + "." + namespace,
+        code,
+    )
+    # These suffixes denote domains or filenames, not owned context segments.
+    suffixes = (
+        r"com|org|net|io|invalid|test|localhost|py|ts|json|md|yaml|yml|txt|html|svg|png"
+    )
+    code = re.sub(
+        rf"(?<![\w./:@-])example\.(?!(?:{suffixes})(?![\w]))(?=[a-z_])",
+        lambda match: namespace + ".",
+        code,
+    )
+    slug = namespace.replace(".", "-").replace("_", "-")
+    return re.sub(
+        r"(?<![\w./:@-])example-(?=motd\b|workflow\b)",
+        lambda match: slug + "-",
+        code,
+    )
+
+
+def rewrite_markdown(source: str, namespace: str) -> str:
+    """Only rewrite fenced examples and inline code, leaving prose/links intact."""
+    result = []
+    fence = None
+    for line in source.splitlines(keepends=True):
+        marker = re.match(r"^ {0,3}(`{3,}|~{3,})(.*)$", line)
+        if marker and fence is None:
+            fence = marker[1]
+        elif (
+            marker
+            and marker[1][0] == fence[0]
+            and len(marker[1]) >= len(fence)
+            and not marker[2].strip()
+        ):
+            fence = None
+        elif fence:
+            line = rewrite_markdown_code(line, namespace)
+        else:
+            line = re.sub(
+                r"(?P<ticks>`+)(?P<code>[^`\n]+)(?P=ticks)",
+                lambda match: match["ticks"]
+                + rewrite_markdown_code(match["code"], namespace)
+                + match["ticks"],
+                line,
+            )
+        result.append(line)
+    return "".join(result)
+
+
+def rewrite_project_docs(root: Path, namespace: str) -> None:
+    docs = [root / "README.md", root / "cli/README.md"]
+    docs.extend((root / "docs").glob("*.md"))
+    docs.extend((root / "workflows/src").rglob("README.md"))
+    docs.extend((root / "workflows/src").rglob("OVERVIEW.md"))
+    for file in docs:
+        if (
+            not file.is_file()
+            or file.is_symlink()
+            or "specs" in file.relative_to(root).parts
+            or any(
+                (root / parent).is_symlink()
+                for parent in file.relative_to(root).parents
+            )
+        ):
+            continue
+        original = file.read_text(encoding="utf-8")
+        updated = rewrite_markdown(original, namespace)
+        if updated != original:
+            file.write_text(updated, encoding="utf-8")
+
+
 def rewrite_namespace(root: Path, namespace: str) -> None:
     if not valid_namespace(namespace):
         raise ValueError(
@@ -108,7 +196,7 @@ def rewrite_namespace(root: Path, namespace: str) -> None:
     for file in (root / "workflows/src").rglob("*"):
         if not file.is_file() or file.is_symlink() or "specs" in file.parts:
             continue
-        if file.suffix not in {".py", ".json", ".md"}:
+        if file.suffix not in {".py", ".json"}:
             continue
         original = file.read_text(encoding="utf-8")
         if file.suffix == ".py":
@@ -121,12 +209,23 @@ def rewrite_namespace(root: Path, namespace: str) -> None:
                 if after != before
                 else original
             )
-        else:
-            slug = namespace.replace(".", "-").replace("_", "-")
-            updated = (
-                re.sub(r"\bexample\.", namespace + ".", original)
-                .replace("example-motd", slug + "-motd")
-                .replace("POLYAPI_NAMESPACE=example", "POLYAPI_NAMESPACE=" + namespace)
-            )
         if updated != original:
             file.write_text(updated, encoding="utf-8")
+    rewrite_env_example(root, namespace)
+    rewrite_project_docs(root, namespace)
+
+
+def rewrite_env_example(root: Path, namespace: str) -> None:
+    """Keep env files later created from the example aligned with the code."""
+    file = root / "workflows/dev.env.example"
+    if not file.is_file() or file.is_symlink():
+        return
+    original = file.read_text(encoding="utf-8")
+    slug = namespace.replace(".", "-").replace("_", "-")
+    updated = re.sub(
+        r"(?m)^(POLYAPI_NAMESPACES?=)example(?=$|,)",
+        lambda match: match[1] + namespace,
+        original,
+    ).replace("/apis/example-", "/apis/" + slug + "-")
+    if updated != original:
+        file.write_text(updated, encoding="utf-8")

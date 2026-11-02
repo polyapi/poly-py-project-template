@@ -16,6 +16,45 @@ function global:flow {
         }
         $flowRoot = $flowParent
     }
+    # Local maintenance must not select a target or install dependencies.
+    if ($args.Count -gt 0 -and $args[0] -in @('self-update', '--version', '-V')) {
+        $flowPython = Join-Path $flowRoot '.venv/Scripts/python.exe'
+        if (-not (Test-Path -LiteralPath $flowPython -PathType Leaf)) {
+            $flowPython = Join-Path $flowRoot '.venv/bin/python'
+        }
+        if (-not (Test-Path -LiteralPath $flowPython -PathType Leaf)) {
+            $flowPythonCommand = Get-Command python3, python -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+            $flowPython = if ($flowPythonCommand) { $flowPythonCommand.Source } else { $null }
+        }
+        if (-not $flowPython) {
+            Write-Error 'Python 3.11 or newer is required for local Flow maintenance.'
+            $global:LASTEXITCODE = 1
+            return
+        }
+        & $flowPython -B -c 'import sys; sys.exit(sys.version_info < (3, 11))'
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error 'Python 3.11 or newer is required for local Flow maintenance.'
+            $global:LASTEXITCODE = 1
+            return
+        }
+        $flowEntry = 'cli/flow.py'
+        $flowArgs = @($args)
+        if ($args[0] -eq 'self-update') {
+            $flowEntry = 'cli/self_update.py'
+            $flowArgs = @($args | Select-Object -Skip 1)
+        }
+        $flowStatus = 1
+        Push-Location -LiteralPath $flowRoot
+        try {
+            & $flowPython -B $flowEntry @flowArgs
+            $flowStatus = $LASTEXITCODE
+        }
+        finally {
+            Pop-Location
+            $global:LASTEXITCODE = $flowStatus
+        }
+        return
+    }
     if (-not (Get-Command uv -CommandType Application -ErrorAction SilentlyContinue)) {
         Write-Error 'Install uv and add it to PATH first.'
         $global:LASTEXITCODE = 1

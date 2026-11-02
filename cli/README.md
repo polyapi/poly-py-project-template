@@ -4,8 +4,27 @@ Python Flow validates and synchronizes PolyAPI resources from local Python
 functions and JSON artefacts. It also provides OpenAPI training with AI metadata
 enrichment, scoped resource cleanup, function logs, and schema refresh.
 
-See the [project README](../README.md) for Python 3.12.12 setup, dependencies,
-environment configuration, and the sample workflow.
+Check the installed Flow version with `flow --version` (or `flow -V`) when
+using the configured shell helper. From the project root, you can also run:
+
+```bash
+uv run --locked python cli/flow.py --version
+```
+
+Before dependency setup, `python3 cli/flow.py --version` works with just Python.
+Flow's versioned baseline was **1.1.0**; **1.2.0** adds self-update. Its version is
+maintained in `cli/__init__.py`, independently of the workspace and PolyAPI SDK.
+Patch releases contain fixes, minor releases add compatible features, and
+major releases introduce breaking changes. Matching language versions do not
+imply identical features; each CLI's version advances with its own releases.
+
+Preview and apply updates with `flow self-update --check` and
+`flow self-update`. See [Upgrading Flow](../docs/UPGRADING_FLOW.md) for
+compatibility checks, customization review, and recovery.
+
+See [setup and development](../docs/SETUP.md) for Python 3.12.12 setup,
+dependencies, and environment configuration. The
+[template homepage](../README.md#learn-by-example) links to the sample workflows.
 
 Run from the repository root:
 
@@ -45,17 +64,20 @@ A failed generation is retried by the next push, including `--resume`.
 
 ## Interactive setup
 
-For a new project, the root README's [kickstart command](../README.md#quick-start)
+For a new project, the root README's [kickstart command](../README.md#getting-started)
 handles cloning, dependencies, skills, namespaces, SDK generation, and editor
 configuration. It reuses the same identity verification, environment pin, and
 target/editor save path described here. The following manual setup remains
 available for existing checkouts and target changes.
 
-Load the [Bash, Fish, or PowerShell helper](../README.md#guided-setup-with-flow)
+Load the [Bash/zsh, Fish, or PowerShell helper](../docs/SETUP.md#existing-checkout-or-manual-setup)
 once, then run `flow setup`. The shell function activates the project's `.venv`
-and forwards commands to `uv run --locked python cli/flow.py`, with the selected
-`ENVPATH`. It finds the nearest Python Flow project from the current directory;
-it does not bind future commands to the checkout where the profile was installed.
+and forwards resource commands to `uv run --locked python cli/flow.py`, with
+the selected `ENVPATH`. It finds the nearest Python Flow project from the current
+directory; it does not bind future commands to the checkout where the profile
+was installed.
+Version and self-update commands bypass environment selection; self-update
+uses the existing interpreter without syncing or installing dependencies.
 
 Setup uses the pinned Python SDK's native interactive setup and generation.
 It removes inherited `POLY_API_KEY` and `POLY_API_BASE_URL` only in its child
@@ -314,13 +336,40 @@ spec source or URL override is provided.
 
 Keep separate environment files for separate targets and select one with
 `ENVPATH`. Each must retain its own verified `TARGET_ENV_ID`, regardless of
-where the connection comes from.
+where the connection comes from. This is the environment's ID, not a namespace,
+tenant ID, or display name. Kickstart and `flow setup` verify and save it; for
+manual configuration, use [target pinning](../docs/SETUP.md#pin-the-target-environment).
 
 Flow loads `ENVPATH`, or root `.env` when omitted. The selected file must
 declare `TARGET_ENV_ID`; `GET /whoami` must report that exact environment
-before synchronization proceeds. `POLYAPI_NAMESPACE` limits local contexts
+before synchronization proceeds, including deployment dry runs. The pin must
+come from the file, not only a shell export, and changing it does not change
+the configured connection. Training, cleanup previews, and logs also verify it;
+offline training previews and offline dependency reports do not. Direct SDK
+calls and workflow runtime tests do not enforce this Flow guard.
+
+`POLYAPI_NAMESPACE` limits local contexts
 and orphan ownership. `POLYAPI_NAMESPACES` may provide a comma-separated list
 of explicitly owned roots instead.
+
+`POLY_DEPLOY_SKIP_PATHS` excludes a comma-separated list of files or directories
+from `push` and `push-dynamic` deployment scans. Paths are relative to the
+repository root, and directory entries include their descendants; glob patterns
+are not supported. For example:
+
+```env
+POLY_DEPLOY_SKIP_PATHS=workflows/src/sample_workflow,workflows/src/sample_ai_fx
+```
+
+Merge these with existing exclusions. Online deployment previews load the same
+file settings, and `--paths` cannot override exclusions. Offline graph reports
+do not load `ENVPATH` and do not verify the selected file's exclusions.
+An excluded consumer needed by `push-dynamic`
+blocks the plan rather than being deployed despite the exclusion. Skipped local
+files still count during orphan detection, so this setting does not delete
+existing samples. It does not limit explicit training or context-based cleanup
+commands. See [skipping samples](../docs/SETUP.md#skip-sample-deployments) for
+enabling a sample again while following its tutorial.
 
 `GIT_PROD_BRANCH` defaults to `main`, and `GIT_PROD_SKIP_BRANCHES` to `develop`.
 Bindings use `branch:path/to/file.env`; a bare filename resolves under `env/`.
@@ -573,7 +622,6 @@ Recursive schema training is enabled by default. The pinned Python SDK can skip
 recursive schema types during SDK generation; inspect its warnings when a
 contract contains recursion. Platform training and SDK type generation are
 separate checks.
-
 
 ## Schema refresh
 
