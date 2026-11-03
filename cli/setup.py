@@ -298,7 +298,7 @@ def prepare_env(
             "This replaces the file's target identity and removes its old POLY_EXEC_API_KEY."
         )
         updates["POLY_EXEC_API_KEY"] = ""
-    if not confirm(f"Save {identity.label} to {envpath}?", default=not changed_target):
+    if not confirm(f"Save {identity.label} to {envpath}?"):
         raise SetupError("Cancelled; no project target was saved.")
     return update_dotenv(text, updates)
 

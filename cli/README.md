@@ -102,6 +102,8 @@ an existing file's target change requires
 explicit confirmation and clears that key too. Other workflow configuration is
 preserved. Existing env files must be untracked and Git-ignored. Setup does not
 rename contexts, train APIs, deploy resources, or weaken branch/OTP safeguards.
+Its yes/no prompts show `[y/N]`, like every Flow prompt: Enter answers no, so
+type `y` to create or save the selected env file.
 Native SDK configuration/generation occurs first and is not rolled back when a
 later prompt is cancelled.
 

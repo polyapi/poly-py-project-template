@@ -253,6 +253,10 @@ for your user, without administrator rights; the installer adds uv to your
 shell profile, so open a new terminal afterwards. uv downloads the pinned
 Python when needed.
 
+Every yes/no prompt in kickstart and Flow shows `[y/N]`: Enter answers no, and
+only an explicit `y` or `yes` proceeds. This includes `flow setup`'s prompts to
+create and save the selected environment file.
+
 You can also run `bash kickstart/kickstart.sh` from an existing template
 checkout; that path includes pending source changes. Local configuration and
 credential files are excluded from the new project. Kickstart does not deploy

@@ -216,7 +216,7 @@ def test_setup_writes_identity_preserves_config_and_saves_no_secret_in_state(
         lambda root: ("synthetic-key", "https://test.invalid"),
     )
     monkeypatch.setattr(onboarding, "fetch_identity", lambda *a: IDENTITY)
-    answers(monkeypatch, "", "", "")
+    answers(monkeypatch, "", "yes", "yes")
     onboarding.setup(project)
     target = project / "workflows/dev.env"
     values = dotenv_values(target)
@@ -476,7 +476,7 @@ def test_existing_target_keeps_execution_key_on_repeat(monkeypatch, project):
     path.write_text(
         "POLY_API_BASE_URL=https://test.invalid\nTARGET_ENV_ID=test-environment\nPOLY_EXEC_API_KEY=synthetic-exec\n"
     )
-    answers(monkeypatch, "")
+    answers(monkeypatch, "yes")
     content = onboarding.prepare_env(
         project, "workflows/dev.env", IDENTITY, "synthetic-new", "https://test.invalid"
     )
@@ -489,7 +489,7 @@ def test_namespace_only_existing_target_keeps_execution_key(monkeypatch, project
         "POLYAPI_NAMESPACE=demo\nTARGET_ENV_ID=test-environment\n"
         "POLY_EXEC_API_KEY=synthetic-exec\n"
     )
-    answers(monkeypatch, "")
+    answers(monkeypatch, "yes")
     values = dotenv_values(
         stream=StringIO(
             onboarding.prepare_env(
@@ -562,11 +562,11 @@ def test_repeat_setup_retains_defaults_and_file_content(monkeypatch, project):
         lambda root: ("synthetic-key", "https://test.invalid"),
     )
     monkeypatch.setattr(onboarding, "fetch_identity", lambda *a: IDENTITY)
-    answers(monkeypatch, "", "", "")
+    answers(monkeypatch, "", "yes", "yes")
     onboarding.setup(project)
     env = project / "workflows/dev.env"
     first = env.read_text()
-    answers(monkeypatch, "", "")
+    answers(monkeypatch, "", "yes")
     onboarding.setup(project)
     assert env.read_text() == first
     assert onboarding.read_state(project)["envpath"] == "workflows/dev.env"
@@ -581,7 +581,7 @@ def test_invalid_editor_settings_prevent_env_save(monkeypatch, project):
         lambda root: ("synthetic-key", "https://test.invalid"),
     )
     monkeypatch.setattr(onboarding, "fetch_identity", lambda *a: IDENTITY)
-    answers(monkeypatch, "", "", "")
+    answers(monkeypatch, "", "yes", "yes")
     with pytest.raises(onboarding.SetupError, match="JSONC"):
         onboarding.setup(project)
     assert not (project / "workflows/dev.env").exists()
@@ -626,7 +626,7 @@ def test_cancelled_optional_profile_keeps_successful_setup(monkeypatch, project)
         raise KeyboardInterrupt
 
     monkeypatch.setattr(onboarding, "offer_profile", interrupt)
-    answers(monkeypatch, "", "", "")
+    answers(monkeypatch, "", "yes", "yes")
     onboarding.setup(project, "fish")
     assert onboarding.read_state(project)["envpath"] == "workflows/dev.env"
 
