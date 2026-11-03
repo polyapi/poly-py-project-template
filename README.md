@@ -139,3 +139,29 @@ Platform references: [PolyAPI overview](https://docs.polyapi.io/platform_overvie
 and [Python SDK documentation](https://docs.polyapi.io/generated_sdks/python.html).
 The template does not bundle customer credentials, generated environment SDKs,
 or deployment automation.
+
+## Contributing
+
+Bug fixes, clearer documentation, and better examples are welcome.
+
+1. For larger changes, [open an issue](https://github.com/polyapi/poly-py-project-template/issues)
+   first so we can agree on the approach.
+2. Fork and clone this repository, then create a branch for your change. Use a
+   direct clone rather than kickstart, which creates a personalised project.
+3. Follow the [project conventions](docs/CONVENTIONS.md). Keep code, artefacts,
+   tests, and affected guides aligned. Never include credentials or customer data.
+4. For code changes, run the local checks below. For documentation changes,
+   verify links and examples against the current implementation.
+5. Open a focused pull request against `main`, explaining the change and how you
+   checked it. A maintainer will review it.
+
+Install dependencies and run local checks from the repository root:
+
+```bash
+uv sync --locked
+make check
+```
+
+## License
+
+Licensed under the [MIT License](LICENSE).
