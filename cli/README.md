@@ -12,7 +12,8 @@ uv run --locked python cli/flow.py --version
 ```
 
 Before dependency setup, `python3 cli/flow.py --version` works with just Python.
-Flow's versioned baseline was **1.1.0**; **1.2.0** adds self-update. Its version is
+Flow's versioned baseline was **1.1.0**; **1.2.0** adds self-update, and **1.3.0**
+adds MCP server deployment. Its version is
 maintained in `cli/__init__.py`, independently of the workspace and PolyAPI SDK.
 Patch releases contain fixes, minor releases add compatible features, and
 major releases introduce breaking changes. Matching language versions do not
@@ -49,13 +50,14 @@ Run utility commands with `uv run --locked python -m cli.operations --help`.
 | `triggers` | `artefacts/triggers/*.json` | Resolve webhook and server references; recreate structural changes |
 | `jobs` | `artefacts/jobs/*.json` | Resolve server functions and synchronize schedules |
 | `ai-functions` | `artefacts/ai-functions/*.json`, `*.jsonc` | Create and patch AI functions |
+| `mcp-servers` | `artefacts/mcp-servers/*.json`, `*.jsonc` | Create and patch MCP servers by exact name; never orphans |
 | `canopy` | `artefacts/canopy/*.json`, `*.jsonc` | Create applications and update configuration/description |
 | `subscriptions` | `artefacts/subscriptions/*.json`, `*.jsonc` | Create GraphQL streams; existing streams require confirmed recreation |
 
 Both `artefacts/` and legacy `artifacts/` spellings are discovered.
 
 The push order is Vari → Canopy → Tabi → schemas → Python functions →
-AI functions → webhooks → triggers → jobs → subscriptions. Regular `push`
+AI functions → MCP servers → webhooks → triggers → jobs → subscriptions. Regular `push`
 synchronizes client functions before server functions; `push-dynamic` uses
 the dependency graph to order its planned functions. Pushes selecting Python or AI functions
 regenerate the SDK even when remote functions are unchanged, unless `--skip-generate`
@@ -465,6 +467,62 @@ references. Create/update payloads are checked against the JSON schemas in
 `cli/schemas/`. Context/provider changes are not patched
 automatically. Omitted fields are preserved; explicit empty arrays remove
 tools or arguments.
+
+## MCP servers
+
+An MCP server exposes selected PolyAPI functions as tools to MCP clients such as
+coding agents and chat assistants. Keep each server in
+`artefacts/mcp-servers/<name>.json`:
+
+```json
+{
+  "name": "example-weather-tools",
+  "description": "Current weather lookup for MCP clients.",
+  "enabled": true,
+  "isPublic": false,
+  "toolFunctions": [
+    {
+      "functionName": "searchLocations",
+      "functionContext": "example.sample_workflow",
+      "argumentConfig": [
+        { "key": "name", "source": "ai" },
+        {
+          "key": "hostUrl",
+          "source": "hardcoded",
+          "value": "https://geocoding-api.open-meteo.com"
+        }
+      ]
+    }
+  ]
+}
+```
+
+Tool references use `functionName` and `functionContext` and resolve against
+accessible API, server, and client functions, the same set used for AI function
+tools. Each `argumentConfig` entry uses the AI function sources: `ai` (the MCP
+client supplies it), `hardcoded`, `argument`, or a namespace-owned `variable`.
+For OAuth, set `oauthClientId`, `oauthRedirectUris`, and
+`oauthClientSecretVariable` with `variableName` and `variableContext`; use
+`null` to clear the client ID or secret. Remote IDs such as `toolFunctionIds`,
+`oauthClientSecretVariableId`, `environmentId`, and `mcpUrl` are rejected.
+
+MCP servers have no namespace context. Flow therefore identifies each one by
+its exact `name` in the environment verified by `TARGET_ENV_ID`: it creates the
+server when that name is absent and PATCHes only changed fields when it exists.
+Choose a name that is unique in the target environment; duplicate local or
+remote names stop the sync before any write. Because Flow cannot tell which
+remote servers belong to this project, it never reports or deletes MCP servers
+as orphans, and `delete-content` does not cover them. Remove retired servers
+deliberately in PolyAPI.
+
+Flow prints each server's MCP URL after it is created, updated, or found
+unchanged. `isPublic: true` produces a warning; confirm that the server should
+be reachable as a public MCP endpoint before deploying it. Deploy the tool
+functions first, then sync only the servers:
+
+```bash
+ENVPATH=workflows/dev.env uv run --locked python cli/flow.py push --paths sample_workflow --types mcp-servers --dry-run
+```
 
 ## Canopy
 

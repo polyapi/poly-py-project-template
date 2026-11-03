@@ -16,6 +16,7 @@ local skill below for the behavior being implemented or reviewed.
 | --- | --- |
 | Webhooks, API calls, or secret injection | [Sample workflow](workflows/src/sample_workflow/OVERVIEW.md) |
 | AI tools and structured weather output | [Weather AI](workflows/src/sample_workflow/OVERVIEW.md#weather-ai) |
+| Exposing functions to MCP clients | [MCP servers](cli/README.md#mcp-servers) and `sync_mcp_servers` in `cli/flow.py` |
 | Logging or error notifications | [Common utilities](workflows/src/utilities/common/OVERVIEW.md) |
 | Shell setup and editor/target selection | [Interactive setup](cli/README.md#interactive-setup), `cli/setup.py`, and `cli/shell/` |
 | New-project bootstrapping | [Getting started](README.md#getting-started), `kickstart/kickstart.sh`, `kickstart/kickstart.py`, and `kickstart/configure.py` |

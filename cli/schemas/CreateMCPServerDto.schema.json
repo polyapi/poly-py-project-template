@@ -1,0 +1,100 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$ref": "#/components/schemas/CreateMCPServerDto",
+  "components": {
+    "schemas": {
+      "CreateMCPServerDto": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "oauthClientId": {
+            "type": "string",
+            "nullable": true
+          },
+          "oauthClientSecretVariableId": {
+            "type": "string",
+            "nullable": true
+          },
+          "oauthRedirectUris": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uri"
+            }
+          },
+          "description": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "isPublic": {
+            "type": "boolean"
+          },
+          "toolFunctionIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "toolFunctions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MCPToolFunctionConfigDto"
+            }
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "MCPToolFunctionConfigDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "argumentConfig": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MCPToolFunctionArgumentConfigDto"
+            }
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "MCPToolFunctionArgumentConfigDto": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "ai",
+              "hardcoded",
+              "argument",
+              "variable"
+            ]
+          },
+          "value": true,
+          "argumentKey": {
+            "type": "string"
+          },
+          "variableId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "source"
+        ]
+      }
+    }
+  }
+}
