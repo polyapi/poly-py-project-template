@@ -116,8 +116,12 @@ or establish the target environment; use a live dry run before deploying.
 - Give each server a name that is unique in the target environment. MCP servers
   have no namespace context, so Flow matches them by name and never deletes them
   as orphans.
-- Keep `isPublic` false unless a public MCP endpoint is an explicit requirement.
-  Store OAuth client secrets in `SECRET` vari artefacts without committing values.
+- Keep `isPublic` false unless a public MCP endpoint is an explicit requirement:
+  anyone with a public server's URL can call its tools. A private server expects
+  an OAuth sign-in, not a PolyAPI key, so give it OAuth settings before sharing
+  it. Store OAuth client secrets in `SECRET` vari artefacts without committing
+  values.
+- Tool names include the function's context, so MCP clients see the namespace.
 
 ## Ownership and references
 

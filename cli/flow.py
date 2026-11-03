@@ -10054,9 +10054,33 @@ def resolve_mcp_payload(
     return payload
 
 
-def log_mcp_url(logger: Logger, name: str, record: Any) -> None:
-    url = record.get("mcpUrl") if isinstance(record, dict) else None
+def mcp_url(client: PolyApiClient, record: Any) -> str | None:
+    """Return a server's MCP URL.
+
+    Only GET /mcp-servers/{id} includes ``mcpUrl``; list items and create or
+    update responses omit it, so a record without one is looked up by ID.
+    """
+    if not isinstance(record, dict):
+        return None
+    url = record.get("mcpUrl")
     if isinstance(url, str) and url:
+        return url
+    identifier = record.get("id")
+    if not isinstance(identifier, str) or not identifier:
+        return None
+    fetched = client.request("GET", f"/mcp-servers/{identifier}")
+    url = fetched.get("mcpUrl") if isinstance(fetched, dict) else None
+    return url if isinstance(url, str) and url else None
+
+
+def log_mcp_url(client: PolyApiClient, logger: Logger, name: str, record: Any) -> None:
+    # The URL is informational: a failed lookup must not fail a finished sync.
+    try:
+        url = mcp_url(client, record)
+    except DeployError:
+        logger.muted(f"Could not read the MCP URL for {name}.")
+        return
+    if url:
         logger.info(f"MCP URL for {name}: {url}")
 
 
@@ -10102,8 +10126,8 @@ def sync_mcp_servers(
         name = payload["name"]
         if payload.get("isPublic") is True:
             logger.warn(
-                f"MCP server {name} sets isPublic: true; confirm it is meant to be "
-                "publicly reachable."
+                f"MCP server {name} sets isPublic: true: anyone with its URL can "
+                "call its tools without signing in."
             )
         matches = [record for record in records if record.get("name") == name]
         if len(matches) > 1:
@@ -10112,7 +10136,7 @@ def sync_mcp_servers(
                 "environment; rename or remove the duplicates before syncing"
             )
         if not matches:
-            plans.append(("POST", "/mcp-servers", payload, name))
+            plans.append(("POST", "/mcp-servers", payload, name, None))
             continue
         remote = matches[0]
         path = f"/mcp-servers/{resource_id(remote)}"
@@ -10123,16 +10147,24 @@ def sync_mcp_servers(
         }
         if not changes:
             summary.mcp_servers.skipped += 1
-            log_mcp_url(logger, name, remote)
+            log_mcp_url(client, logger, name, remote)
             continue
         validate_endpoint_payload("UpdateMCPServerDto", changes)
-        plans.append(("PATCH", path, changes, name))
-    for method, path, payload, name in plans:
+        plans.append(("PATCH", path, changes, name, remote))
+    for method, path, payload, name, remote in plans:
         logger.info(
             f"{'Would apply' if cli_args.dry_run else 'Applying'} {method} {path}"
         )
-        if not cli_args.dry_run:
-            log_mcp_url(logger, name, client.request(method, path, payload=payload))
+        if cli_args.dry_run:
+            if remote is not None:
+                log_mcp_url(client, logger, name, remote)
+        else:
+            written = client.request(method, path, payload=payload)
+            record = written if isinstance(written, dict) else {}
+            # An update targets the matched server, whatever its response holds.
+            if remote is not None:
+                record = {**record, "id": resource_id(remote)}
+            log_mcp_url(client, logger, name, record)
         if method == "POST":
             summary.mcp_servers.created += 1
         else:

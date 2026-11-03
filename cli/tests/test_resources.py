@@ -1450,6 +1450,12 @@ def mcp_client(servers=None):
             "/variables": MCP_VARIABLES,
         }
     )
+    # Like PolyAPI, only the single-server endpoint returns mcpUrl.
+    for identifier in ("created", "mcp-id"):
+        responses[f"/mcp-servers/{identifier}"] = {
+            "id": identifier,
+            "mcpUrl": f"https://example.invalid/mcp-servers/{identifier}/mcp",
+        }
     return FakeClient(responses)
 
 
@@ -1521,7 +1527,7 @@ def test_mcp_local_preflight_needs_no_remote_records(settings):
 
 
 @pytest.mark.parametrize("dry_run", [False, True])
-def test_mcp_create_and_dry_run(settings, dry_run):
+def test_mcp_create_and_dry_run(settings, dry_run, capsys):
     config, args, logger, summary = settings
     artefact(config, "mcp-servers", mcp_server())
     client = mcp_client()
@@ -1532,19 +1538,39 @@ def test_mcp_create_and_dry_run(settings, dry_run):
         [] if dry_run else [("POST", "/mcp-servers", {"payload": MCP_RESOLVED})]
     )
     assert summary.mcp_servers.created == 1
+    # The create response has no URL; it comes from the single-server endpoint.
+    lookups = [call[1] for call in client.calls if call[1] == "/mcp-servers/created"]
+    assert lookups == ([] if dry_run else ["/mcp-servers/created"])
+    printed = (
+        "https://example.invalid/mcp-servers/created/mcp" in capsys.readouterr().out
+    )
+    assert printed is not dry_run
 
 
-def test_mcp_matches_by_name_in_target_environment_and_patches_changes(settings):
+def test_mcp_url_lookup_failure_does_not_fail_the_sync(settings, capsys):
+    config, args, logger, summary = settings
+    artefact(config, "mcp-servers", mcp_server())
+    client = mcp_client()
+    client.responses["/mcp-servers/created"] = flow.DeployError("unavailable")
+    assert flow.sync_mcp_servers(client, config, args, logger, summary, "env-1")
+    assert summary.mcp_servers.created == 1
+    assert "Could not read the MCP URL for" in capsys.readouterr().out
+
+
+def test_mcp_matches_by_name_in_target_environment_and_patches_changes(
+    settings, capsys
+):
     config, args, logger, summary = settings
     artefact(config, "mcp-servers", mcp_server(enabled=False))
+    # Like PolyAPI's list, the remote record carries no mcpUrl.
     remote = {
         **MCP_RESOLVED,
         "id": "mcp-id",
         "environmentId": "env-1",
         "createdAt": "2026-11-01T00:00:00Z",
-        "mcpUrl": "https://example.invalid/mcp-servers/mcp-id/mcp",
         "toolFunctionIds": ["search-id"],
     }
+    url = "https://example.invalid/mcp-servers/mcp-id/mcp"
     other_environment = {**remote, "id": "elsewhere", "environmentId": "env-2"}
     client = mcp_client([other_environment, remote])
     assert flow.sync_mcp_servers(client, config, args, logger, summary, "env-1")
@@ -1552,6 +1578,7 @@ def test_mcp_matches_by_name_in_target_environment_and_patches_changes(settings)
         ("PATCH", "/mcp-servers/mcp-id", {"payload": {"enabled": False}})
     ]
     assert summary.mcp_servers.updated == 1
+    assert f"MCP URL for example-weather-tools: {url}" in capsys.readouterr().out
 
     unchanged = flow.Summary()
     artefact(config, "mcp-servers", mcp_server())
@@ -1559,6 +1586,7 @@ def test_mcp_matches_by_name_in_target_environment_and_patches_changes(settings)
     assert not flow.sync_mcp_servers(client, config, args, logger, unchanged, "env-1")
     assert not client.writes
     assert unchanged.mcp_servers.skipped == 1
+    assert f"MCP URL for example-weather-tools: {url}" in capsys.readouterr().out
 
 
 def test_mcp_duplicate_names_fail_before_any_write(settings):

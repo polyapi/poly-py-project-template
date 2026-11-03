@@ -517,14 +517,31 @@ remote servers belong to this project, it never reports or deletes MCP servers
 as orphans, and `delete-content` does not cover them. Remove retired servers
 deliberately in PolyAPI.
 
-Flow prints each server's MCP URL after it is created, updated, or found
-unchanged. `isPublic: true` produces a warning; confirm that the server should
-be reachable as a public MCP endpoint before deploying it. Deploy the tool
-functions first, then sync only the servers:
+Flow prints each server's MCP URL, `https://<instance>/mcp-servers/<id>/mcp`,
+after it is created, updated, or found unchanged; only `GET /mcp-servers/{id}`
+returns it. Deploy the tool functions first, then sync only the servers:
 
 ```bash
 ENVPATH=workflows/dev.env uv run --locked python cli/flow.py push --paths sample_workflow --types mcp-servers --dry-run
 ```
+
+MCP clients see each tool as its context and name joined with underscores, for
+example `example_sample_workflow_searchLocations`, with the function's own
+description. Only `ai` arguments become tool inputs: PolyAPI applies
+`hardcoded`, `argument`, and `variable` bindings without showing them to the
+client, and hardcoded values keep their JSON type.
+
+Access depends on `isPublic`:
+
+- `isPublic: true`: any client with the URL can list and call the tools without
+  signing in. Flow warns about it on every push.
+- `isPublic: false`: PolyAPI rejects anonymous requests and PolyAPI keys and
+  expects an OAuth access token. Without OAuth settings, the server's OAuth
+  metadata names no authorization server, so MCP clients cannot sign in.
+  Configure `oauthClientId` and `oauthClientSecretVariable` before sharing a
+  private server; a complete OAuth sign-in has not yet been verified with Flow.
+  When `oauthRedirectUris` is omitted, PolyAPI adds the claude.ai and ChatGPT
+  connector callbacks.
 
 ## Canopy
 
