@@ -13,7 +13,8 @@ walks through a working integration and explains the pieces as you use them.
 ## Getting started
 
 Requires only curl on macOS or Linux, which also provide the `tar` command it
-uses. GitHub authentication, Node.js, and GitHub CLI (`gh`) are not required.
+uses. On Windows, run it in [WSL](docs/SETUP.md#windows). GitHub authentication,
+Node.js, and GitHub CLI (`gh`) are not required.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/polyapi/poly-py-project-template/main/kickstart/kickstart.sh | bash

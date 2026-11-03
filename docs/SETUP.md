@@ -264,6 +264,25 @@ resources or train the sample APIs.
 The training skill must be available on `poly-skills/main`; setup stops with a
 clear message if it is missing.
 
+## Windows
+
+These recommendations have not yet been verified on a Windows machine; report
+problems with your Windows and WSL versions.
+
+Use [WSL 2](https://learn.microsoft.com/windows/wsl/install) with a Linux
+distribution such as Ubuntu, and run kickstart and all project commands in its
+terminal. Kickstart then follows the Linux path: it installs uv inside WSL and
+ignores Windows tools reached through `/mnt/<drive>/`, which cannot build a
+Linux project. Keep projects in the Linux file system, such as `~/projects`,
+rather than under `/mnt/c`; kickstart warns when the parent directory is on a
+Windows drive. Install VS Code on Windows with the
+[WSL extension](https://code.visualstudio.com/docs/remote/wsl); `code` in a WSL
+terminal then opens the project through it.
+
+Git Bash also provides the Bash, curl, and tar that kickstart needs, but WSL is
+the recommended Windows setup. Kickstart does not run in PowerShell or Command
+Prompt; the PowerShell `flow` helper is for existing checkouts.
+
 ## Guided setup with `flow`
 
 Use this alternative when you did not use kickstart, or rerun it to change an

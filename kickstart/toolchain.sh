@@ -8,10 +8,18 @@
 KICKSTART_UV_INSTALLER_URL="${KICKSTART_UV_INSTALLER_URL:-https://astral.sh/uv/install.sh}"
 toolchain_installed=false
 
-# Print a usable command's path.
+kickstart_is_wsl() {
+  [[ -n "${WSL_DISTRO_NAME:-}" ]] || grep -qi microsoft /proc/version 2>/dev/null
+}
+
+# Print a usable command's path. Under WSL, Windows tools reached through
+# interop (/mnt/<drive>/...) cannot build a Linux project, so they do not count.
 toolchain_command() {
   local resolved
   resolved="$(command -v "$1" 2>/dev/null)" || return 1
+  if kickstart_is_wsl && [[ "$resolved" == /mnt/[a-zA-Z]/* ]]; then
+    return 1
+  fi
   printf '%s' "$resolved"
 }
 

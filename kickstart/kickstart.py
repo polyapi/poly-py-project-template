@@ -57,6 +57,15 @@ def copyable(relative: Path) -> bool:
     )
 
 
+def running_in_wsl() -> bool:
+    if os.environ.get("WSL_DISTRO_NAME"):
+        return True
+    try:
+        return "microsoft" in Path("/proc/version").read_text().lower()
+    except OSError:
+        return False
+
+
 def git_usable(environment: dict[str, str] | None = None) -> bool:
     """Git is optional; the macOS /usr/bin/git stub opens an installer dialog."""
     git = shutil.which("git")
@@ -313,6 +322,11 @@ def main() -> int:
         elif target == source or source.is_relative_to(target):
             print("Choose a destination outside the template checkout's parents.")
         else:
+            if running_in_wsl() and re.match(r"/mnt/[a-zA-Z]/", f"{parent}/"):
+                print(
+                    f"Note: {parent} is on a Windows drive. WSL projects are much faster "
+                    "in the Linux file system, such as ~/projects."
+                )
             break
     while True:
         namespace = input("Project namespace [demo]: ").strip() or "demo"
