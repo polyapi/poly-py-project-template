@@ -240,9 +240,18 @@ load the helper manually in the current terminal if needed. It does not change
 shell execution policies or replace an existing `flow` command.
 
 It then creates `main` with an initial commit, switches to `develop`, and opens
-VS Code. The [curl command](../README.md#getting-started) downloads a temporary
-public template snapshot; skills use a shallow HTTPS Git clone. No GitHub
-authentication is needed. The downloaded snapshot is removed after setup.
+VS Code. Without Git, it prints the commands that create the repository later;
+without a Git `user.name` and `user.email`, it initializes the repository but
+leaves the first commit to you. Without VS Code's `code` command, it prints the
+project path. The [curl command](../README.md#getting-started) downloads
+temporary public snapshots of the template and skills over HTTPS. No GitHub
+authentication is needed. The downloaded snapshots are removed after setup.
+
+Kickstart's only prerequisite is curl. When uv is missing, it runs Astral's
+[official installer](https://docs.astral.sh/uv/getting-started/installation/)
+for your user, without administrator rights; the installer adds uv to your
+shell profile, so open a new terminal afterwards. uv downloads the pinned
+Python when needed.
 
 You can also run `bash kickstart/kickstart.sh` from an existing template
 checkout; that path includes pending source changes. Local configuration and

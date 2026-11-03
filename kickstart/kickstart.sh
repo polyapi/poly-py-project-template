@@ -34,10 +34,6 @@ bootstrap_public_template() (
 )
 
 main() {
-  if ! command -v uv >/dev/null 2>&1; then
-    printf 'kickstart: install uv and add it to PATH first.\n' >&2
-    exit 1
-  fi
   local script_dir=''
   if [[ -n "$kickstart_source" && -f "$kickstart_source" ]]; then
     script_dir="$(cd -- "$(dirname -- "$kickstart_source")" && pwd)"
@@ -46,7 +42,13 @@ main() {
     bootstrap_public_template
     return
   fi
+  # curl is the only prerequisite: a missing uv is installed for this user, and
+  # uv downloads the pinned Python. Git and VS Code are optional.
+  # shellcheck source=kickstart/toolchain.sh
+  source "$script_dir/toolchain.sh"
+  ensure_uv || exit 1
   python_version="$(<"$script_dir/../.python-version")"
+  printf 'Starting setup with Python %s; uv downloads it if needed...\n' "$python_version"
   exec uv run --no-project --no-config --python "$python_version" "$script_dir/kickstart.py"
 }
 

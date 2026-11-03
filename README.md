@@ -12,18 +12,26 @@ walks through a working integration and explains the pieces as you use them.
 
 ## Getting started
 
-Requires [uv](https://docs.astral.sh/uv/), curl, tar, Git, and the VS Code `code`
-command (on macOS, run
-**Shell Command: Install 'code' command in PATH** from the VS Code command
-palette). GitHub authentication, Node.js, and GitHub CLI (`gh`) are not required.
+Requires only curl on macOS or Linux, which also provide the `tar` command it
+uses. GitHub authentication, Node.js, and GitHub CLI (`gh`) are not required.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/polyapi/poly-py-project-template/main/kickstart/kickstart.sh | bash
 ```
 
-Kickstart downloads the public template into a temporary directory and fetches
-skills with a shallow HTTPS Git clone. You do not need to clone the template
-first. From an existing template checkout, `bash kickstart/kickstart.sh` also works.
+Kickstart downloads public snapshots of the template and skills over HTTPS into
+a temporary directory. You do not need to clone the template first. From an
+existing template checkout, `bash kickstart/kickstart.sh` also works.
+
+If [uv](https://docs.astral.sh/uv/) is missing, kickstart installs it for your
+user account with Astral's official installer, which adds it to your shell
+profile; open a new terminal afterwards. uv then downloads the pinned Python
+3.12.12 when it is not already available. Git and VS Code are optional. Without
+Git, kickstart prints the commands that create the repository later; without a
+Git name and email, it skips the initial commit and tells you how to finish.
+Without VS Code's `code` command (on macOS, run **Shell Command: Install 'code'
+command in PATH** from the VS Code command palette), it prints the project path
+instead of opening it.
 
 The parent directory defaults to your current terminal directory. Your project
 is created inside it using the project name you enter.
