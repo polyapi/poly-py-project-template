@@ -161,7 +161,9 @@ def load_specs(
     return specs
 
 
-def order_schemas(schemas: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def order_schemas(
+    schemas: list[dict[str, Any]], *, reject_cycles: bool = False
+) -> list[dict[str, Any]]:
     by_key = {f"{item.get('context', '')}.{item['name']}": item for item in schemas}
     ordered: list[dict[str, Any]] = []
     active: set[str] = set()
@@ -180,8 +182,12 @@ def order_schemas(schemas: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
     def visit(key: str) -> None:
         if key in active:
-            # Recursive JSON Schema references are valid. The platform accepts
-            # forward references; retain the contract instead of inventing placeholders.
+            if reject_cycles:
+                raise flow.DeployError(
+                    "The pinned Python SDK cannot generate recursive schema references; "
+                    "use --skip-generate to train without SDK refresh."
+                )
+            # Metadata-only validation/export preserves valid recursive contracts.
             return
         if key in visited:
             return
@@ -231,7 +237,10 @@ def train_model(
     model: dict[str, list[dict[str, Any]]],
     *,
     dry_run: bool,
+    skip_generate: bool = False,
 ) -> None:
+    # Check the entire model before the first schema, function, or webhook upsert.
+    order_schemas(model.get("schemas", []), reject_cycles=not skip_generate)
     for kind, (endpoint, _) in MODEL_TYPES.items():
         for item in model[kind]:
             print(
@@ -254,6 +263,7 @@ def train_openapi(
     disable_ai: bool = False,
     renames: list[list[str]] | None = None,
     operation_ids: list[str] | None = None,
+    skip_generate: bool = False,
 ) -> None:
     rename_model({}, renames or [])
     prepared = []
@@ -327,7 +337,7 @@ def train_openapi(
         config,
     )
     if not generate_only:
-        train_model(client, combined, dry_run=dry_run)
+        train_model(client, combined, dry_run=dry_run, skip_generate=skip_generate)
 
 
 def deletion_plan(
@@ -615,12 +625,13 @@ def main(argv: list[str] | None = None) -> int:
                 disable_ai=args.disable_ai,
                 renames=args.rename,
                 operation_ids=args.operation_id,
+                skip_generate=args.skip_generate,
             )
             return 0
     elif args.command == "train-model":
         model = validate_model(json.loads(args.source.read_text()), config)
         if args.dry_run:
-            train_model(None, model, dry_run=True)
+            train_model(None, model, dry_run=True, skip_generate=args.skip_generate)
             return 0
     elif args.command == "delete-content":
         flow.require_owned_context(args.context, config)
@@ -661,10 +672,11 @@ def main(argv: list[str] | None = None) -> int:
             disable_ai=args.disable_ai,
             renames=args.rename,
             operation_ids=args.operation_id,
+            skip_generate=args.skip_generate,
         )
     elif args.command == "train-model":
         assert model is not None
-        train_model(client, model, dry_run=False)
+        train_model(client, model, dry_run=False, skip_generate=args.skip_generate)
     elif args.command == "delete-content":
         delete_content(
             client,
