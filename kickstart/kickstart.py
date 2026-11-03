@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import tomllib
 
@@ -15,7 +16,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from cli import shell_profile  # noqa: E402
 from kickstart.namespace import rewrite_namespace, valid_namespace  # noqa: E402
 
-SKILLS_REPOSITORY = "https://github.com/polyapi/poly-skills.git"
+SKILLS_ARCHIVE = (
+    "https://codeload.github.com/polyapi/poly-skills/tar.gz/refs/heads/main"
+)
 PRIVATE_DIRECTORIES = {
     ".git",
     ".venv",
@@ -54,8 +57,147 @@ def copyable(relative: Path) -> bool:
     )
 
 
+def running_in_wsl() -> bool:
+    if os.environ.get("WSL_DISTRO_NAME"):
+        return True
+    try:
+        return "microsoft" in Path("/proc/version").read_text().lower()
+    except OSError:
+        return False
+
+
+def git_usable(environment: dict[str, str] | None = None) -> bool:
+    """Git is optional; the macOS /usr/bin/git stub opens an installer dialog."""
+    git = shutil.which("git")
+    if not git:
+        return False
+    if sys.platform == "darwin" and Path(git) == Path("/usr/bin/git"):
+        tools = subprocess.run(
+            ["xcode-select", "-p"], capture_output=True, env=environment
+        )
+        if tools.returncode:
+            return False
+    return (
+        subprocess.run(
+            [git, "--version"], capture_output=True, env=environment
+        ).returncode
+        == 0
+    )
+
+
+def download_skills(destination: Path, environment: dict[str, str]) -> None:
+    """Fetch the public skills snapshot with curl, kickstart's one prerequisite."""
+    archive = destination.with_name("skills.tar.gz")
+    subprocess.run(
+        [
+            "curl",
+            "--fail",
+            "--silent",
+            "--show-error",
+            "--location",
+            "--proto",
+            "=https",
+            SKILLS_ARCHIVE,
+            "--output",
+            str(archive),
+        ],
+        env=environment,
+        check=True,
+    )
+    destination.mkdir()
+    with tarfile.open(archive) as bundle:
+        members = []
+        for member in bundle.getmembers():
+            parts = Path(member.name).parts[1:]  # Drop the poly-skills-main/ root.
+            if parts:
+                member.name = str(Path(*parts))
+                members.append(member)
+        bundle.extractall(destination, members=members, filter="data")
+    archive.unlink()
+
+
+def initialize_git(target: Path, environment: dict[str, str]) -> None:
+    finish = "git add . && git commit -m 'Initial commit' && git switch -c develop"
+    if not git_usable(environment):
+        print("Git was not found, so the project is not a Git repository yet.")
+        if sys.platform == "darwin":
+            print(
+                "Install it with `xcode-select --install`, then run this in the project:"
+            )
+        else:
+            print(
+                "Install Git with your system's package manager, then run this in the project:"
+            )
+        print(f"  git init -b main && {finish}")
+        return
+    print("Initializing Git...", flush=True)
+    subprocess.run(
+        ["git", "init", "-b", "main"], cwd=target, env=environment, check=True
+    )
+    for private in (
+        ".venv/",
+        ".flow/",
+        ".vscode/",
+        "workflows/dev.env",
+        "workflows/prod.env",
+    ):
+        subprocess.run(
+            ["git", "check-ignore", "--quiet", "--", private],
+            cwd=target,
+            env=environment,
+            check=True,
+        )
+    identity = [
+        (
+            subprocess.run(
+                ["git", "config", "--get", key],
+                cwd=target,
+                env=environment,
+                capture_output=True,
+                text=True,
+            ).stdout
+            or ""
+        ).strip()
+        for key in ("user.name", "user.email")
+    ]
+    if not all(identity):
+        print("Git has no user.name or user.email yet, so no commit was made.")
+        print(
+            'Set them with `git config --global user.name "Your Name"` and '
+            "`git config --global user.email you@example.com`, then run this in the project:"
+        )
+        print(f"  {finish}")
+        return
+    print("Committing and switching to develop...", flush=True)
+    for args in (
+        ["add", "."],
+        ["commit", "-m", "Initial commit"],
+        ["switch", "-c", "develop"],
+    ):
+        subprocess.run(["git", *args], cwd=target, env=environment, check=True)
+
+
+def open_editor(target: Path, environment: dict[str, str]) -> None:
+    if shutil.which("code"):
+        subprocess.run(["code", str(target)], cwd=target, env=environment, check=True)
+    elif (
+        sys.platform == "darwin"
+        and subprocess.run(
+            ["open", "-a", "Visual Studio Code", str(target)],
+            capture_output=True,
+            env=environment,
+        ).returncode
+        == 0
+    ):
+        return
+    else:
+        print(
+            f"VS Code was not opened: its `code` command was not found. Open {target} in your editor."
+        )
+
+
 def copy_checkout(source: Path, target: Path) -> None:
-    if (source / ".git").exists():
+    if (source / ".git").exists() and git_usable():
         # Include pending changes in a local checkout, excluding ignored files.
         paths = (
             subprocess.check_output(
@@ -149,9 +291,11 @@ def offer_optional_profile(root: Path) -> None:
 def main() -> int:
     if not sys.stdin.isatty():
         raise KickstartError("Run kickstart from an interactive terminal.")
-    for tool in ("git", "uv", "code"):
-        if not shutil.which(tool):
-            raise KickstartError(f"Required command not found: {tool}")
+    # kickstart.sh installs uv when missing; Git and VS Code are optional.
+    if not shutil.which("uv"):
+        raise KickstartError(
+            "uv was not found; start setup with kickstart/kickstart.sh."
+        )
     source = Path(__file__).resolve().parents[1]
     while True:
         name = input("Project name: ").strip()
@@ -178,6 +322,11 @@ def main() -> int:
         elif target == source or source.is_relative_to(target):
             print("Choose a destination outside the template checkout's parents.")
         else:
+            if running_in_wsl() and re.match(r"/mnt/[a-zA-Z]/", f"{parent}/"):
+                print(
+                    f"Note: {parent} is on a Windows drive. WSL projects are much faster "
+                    "in the Linux file system, such as ~/projects."
+                )
             break
     while True:
         namespace = input("Project namespace [demo]: ").strip() or "demo"
@@ -199,21 +348,7 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="poly-py-kickstart-") as temporary:
         skills = Path(temporary) / "skills"
         print("Downloading PolyAPI skills...", flush=True)
-        subprocess.run(
-            [
-                "git",
-                "clone",
-                "--depth",
-                "1",
-                "--single-branch",
-                "--branch",
-                "main",
-                SKILLS_REPOSITORY,
-                str(skills),
-            ],
-            env=environment,
-            check=True,
-        )
+        download_skills(skills, environment)
         categories = ("general", "polyapi-common", "polyapi-python")
         for category in categories:
             if not (skills / category / "skills").is_dir():
@@ -295,33 +430,15 @@ def main() -> int:
             environment.pop("POLY_API_BASE_URL")
             key = ""
             offer_optional_profile(target)
-            print("Initializing Git and switching to develop...", flush=True)
-            subprocess.run(
-                ["git", "init", "-b", "main"], cwd=target, env=environment, check=True
-            )
-            for private in (
-                ".venv/",
-                ".flow/",
-                ".vscode/",
-                "workflows/dev.env",
-                "workflows/prod.env",
-            ):
-                subprocess.run(
-                    ["git", "check-ignore", "--quiet", "--", private],
-                    cwd=target,
-                    env=environment,
-                    check=True,
-                )
-            for args in (
-                ["add", "."],
-                ["commit", "-m", "Initial commit"],
-                ["switch", "-c", "develop"],
-            ):
-                subprocess.run(["git", *args], cwd=target, env=environment, check=True)
-            subprocess.run(
-                ["code", str(target)], cwd=target, env=environment, check=True
-            )
+            initialize_git(target, environment)
             print(f"Project ready at {target}")
+            installed = os.environ.get("KICKSTART_UV_INSTALLED_DIR")
+            if installed:
+                print(
+                    f"uv was installed in {installed}. Open a new terminal before "
+                    "running uv commands."
+                )
+            open_editor(target, environment)
         except BaseException:
             print(
                 f"Setup stopped. Project retained at {target} for troubleshooting.",
@@ -348,7 +465,7 @@ if __name__ == "__main__":
         raise SystemExit(1)
     except (OSError, ValueError):
         print(
-            "kickstart: could not prepare the project. Check paths, permissions, and Git access.",
+            "kickstart: could not prepare the project. Check paths, permissions, and network access.",
             file=sys.stderr,
         )
         raise SystemExit(1)

@@ -20,6 +20,7 @@ workflows/src/<workflow>/
     triggers/
     jobs/
     ai-functions/
+    mcp-servers/
     specs/
     canopy/
     subscriptions/
@@ -103,6 +104,24 @@ in other repositories and runtime-built imports are outside the local graph.
 Server deployment payloads include the contexts and native SDK package requirements
 of nested Python clients. Offline graph reports do not validate deployment payloads
 or establish the target environment; use a live dry run before deploying.
+
+## MCP servers
+
+- Keep MCP server artefacts under `artefacts/mcp-servers/`.
+- Expose only functions that are safe for an external model to call. Prefer
+  read-only or bounded actions; keep authorization, destructive operations, and
+  other consequential policy in deterministic code behind the tool.
+- Reference tools with `functionName` and `functionContext`, and fix provider
+  settings with `hardcoded` bindings or namespace-owned `variable` bindings.
+- Give each server a name that is unique in the target environment. MCP servers
+  have no namespace context, so Flow matches them by name and never deletes them
+  as orphans.
+- Keep `isPublic` false unless a public MCP endpoint is an explicit requirement:
+  anyone with a public server's URL can call its tools. A private server expects
+  an OAuth sign-in, not a PolyAPI key, so give it OAuth settings before sharing
+  it. Store OAuth client secrets in `SECRET` vari artefacts without committing
+  values.
+- Tool names include the function's context, so MCP clients see the namespace.
 
 ## Ownership and references
 

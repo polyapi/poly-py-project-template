@@ -6,11 +6,16 @@ import sys
 import tempfile
 
 
-def confirm(message: str, default: bool = True) -> bool:
+def confirm(message: str) -> bool:
+    """Ask a yes/no question the way every Flow and kickstart prompt does.
+
+    Prompts always show [y/N]: Enter keeps the default (no), and only an
+    explicit yes proceeds.
+    """
     while True:
-        answer = input(f"{message} [{'Y/n' if default else 'y/N'}]: ").strip().lower()
+        answer = input(f"{message} [y/N]: ").strip().lower()
         if not answer:
-            return default
+            return False
         if answer in {"y", "yes", "n", "no"}:
             return answer in {"y", "yes"}
         print("Choose yes or no.")
@@ -70,7 +75,7 @@ def offer_profile(root: Path, shell: str | None, profile: str | None) -> None:
         print(f"Shell loader already registered in {path}; left unchanged.")
         return
     print(f"Optional shell profile: {path}\n{command}")
-    if confirm("Add this loader for future terminals?", default=False):
+    if confirm("Add this loader for future terminals?"):
         atomic_write(path, previous.rstrip() + f"\n\n{marker}\n{command}\n")
 
 

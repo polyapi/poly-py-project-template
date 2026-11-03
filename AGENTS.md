@@ -16,9 +16,10 @@ local skill below for the behavior being implemented or reviewed.
 | --- | --- |
 | Webhooks, API calls, or secret injection | [Sample workflow](workflows/src/sample_workflow/OVERVIEW.md) |
 | AI tools and structured weather output | [Weather AI](workflows/src/sample_workflow/OVERVIEW.md#weather-ai) |
+| Exposing functions to MCP clients | [MCP servers](cli/README.md#mcp-servers) and `sync_mcp_servers` in `cli/flow.py` |
 | Logging or error notifications | [Common utilities](workflows/src/utilities/common/OVERVIEW.md) |
 | Shell setup and editor/target selection | [Interactive setup](cli/README.md#interactive-setup), `cli/setup.py`, and `cli/shell/` |
-| New-project bootstrapping | [Getting started](README.md#getting-started), `kickstart/kickstart.sh`, `kickstart/kickstart.py`, and `kickstart/configure.py` |
+| New-project bootstrapping | [Getting started](README.md#getting-started), `kickstart/kickstart.sh`, `kickstart/toolchain.sh`, `kickstart/kickstart.py`, and `kickstart/configure.py` |
 | Deployment, API training, or schema refresh | [Flow reference](cli/README.md), then `cli/flow.py`, `cli/operations.py`, or `cli/schema_refresh.py` |
 | Flow upgrades and recovery | [Upgrading Flow](docs/UPGRADING_FLOW.md), `cli/self_update.py`, and `cli/tests/test_self_update.py` |
 | Local checks or CI | `Makefile`, `pyproject.toml`, `conftest.py`, and `.github/workflows/ci.yml` |

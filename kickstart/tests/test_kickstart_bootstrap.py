@@ -141,6 +141,7 @@ def test_downloaded_wrapper_runs_pinned_python_without_downloading_again(
     with tarfile.open(environment["BOOTSTRAP_ARCHIVE"], "w:gz") as stream:
         for name, data in {
             "kickstart/kickstart.sh": ENTRY.read_bytes(),
+            "kickstart/toolchain.sh": (ROOT / "kickstart/toolchain.sh").read_bytes(),
             "kickstart/kickstart.py": b"# Synthetic setup entry point\n",
             ".python-version": b"3.12.12\n",
         }.items():
@@ -150,6 +151,7 @@ def test_downloaded_wrapper_runs_pinned_python_without_downloading_again(
     uv = Path(environment["PATH"].split(":")[0]) / "uv"
     uv.write_text("""#!/usr/bin/env bash
 set -eu
+if [[ "$1" == --version ]]; then echo 'uv 0.0.0-synthetic'; exit 0; fi
 test -t 0
 [[ "$1 $2 $3 $4 $5 $6" == 'run --no-project --no-config --python 3.12.12 '* ]]
 test -f "$6"
@@ -298,15 +300,17 @@ configure.subprocess.run = generate
 configure.configure(root)
 """
 
+def fake_skills(skills, environment):
+    for category in ("general", "polyapi-common", "polyapi-python"):
+        (skills / category / "skills").mkdir(parents=True)
+    training = skills / "polyapi-python/skills/api-function-training"
+    training.mkdir()
+    (training / "SKILL.md").write_text("Synthetic training fixture\n")
+
+module.download_skills = fake_skills
+
 def controlled_run(command, **kwargs):
-    if command[:2] == ["git", "clone"]:
-        skills = Path(command[-1])
-        for category in ("general", "polyapi-common", "polyapi-python"):
-            (skills / category / "skills").mkdir(parents=True)
-        training = skills / "polyapi-python/skills/api-function-training"
-        training.mkdir()
-        (training / "SKILL.md").write_text("Synthetic training fixture\n")
-    elif command[-1:] == ["kickstart.configure"]:
+    if command[-1:] == ["kickstart.configure"]:
         return real_run([
             os.environ["SIGNAL_UV"], "run", "--offline", "--no-project", "--no-config",
             "--python", os.environ["SIGNAL_PYTHON"], "python", "-B", "-u", "-c", child_code
@@ -354,6 +358,7 @@ def test_terminal_cancellation_respects_optional_profile_boundary(
     with tarfile.open(environment["BOOTSTRAP_ARCHIVE"], "w:gz") as stream:
         for name, data in {
             "kickstart/kickstart.sh": ENTRY.read_bytes(),
+            "kickstart/toolchain.sh": (ROOT / "kickstart/toolchain.sh").read_bytes(),
             "kickstart/kickstart.py": SIGNAL_WORKER.encode(),
             ".python-version": (ROOT / ".python-version").read_bytes(),
         }.items():
@@ -362,7 +367,8 @@ def test_terminal_cancellation_respects_optional_profile_boundary(
             stream.addfile(entry, io.BytesIO(data))
     fake_uv = Path(environment["PATH"].split(":")[0]) / "uv"
     fake_uv.write_text(
-        '#!/bin/sh\nexec "$SIGNAL_UV" run --offline --no-project --no-config '
+        '#!/bin/sh\nif [ "$1" = --version ]; then exec "$SIGNAL_UV" --version; fi\n'
+        'exec "$SIGNAL_UV" run --offline --no-project --no-config '
         '--python "$SIGNAL_PYTHON" python -B -u "$6"\n'
     )
     marker = {

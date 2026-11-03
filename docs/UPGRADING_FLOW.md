@@ -7,7 +7,8 @@ environment. GitHub CLI (`gh`) is not required.
 - [Upgrading with Flow itself](#upgrading-with-flow-itself)
 - [Reviewing customizations and recovering](#reviewing-customizations-and-recovering)
 
-**Python Flow 1.2.0 adds self-update.** Flow's version is maintained in
+**Python Flow 1.2.0 adds self-update, and 1.3.0 adds MCP server deployment.**
+Flow's version is maintained in
 `cli/__init__.py`, separately from the workspace and PolyAPI SDK. Patch releases
 contain fixes, minor releases add compatible features, and major releases
 introduce breaking changes. Python and TypeScript Flow advance independently.

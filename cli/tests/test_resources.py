@@ -84,7 +84,9 @@ def subscription_client(records=None):
     )
 
 
-@pytest.mark.parametrize("kind", ["ai-functions", "canopy", "subscriptions"])
+@pytest.mark.parametrize(
+    "kind", ["ai-functions", "mcp-servers", "canopy", "subscriptions"]
+)
 def test_extra_types_are_exposed_in_push(kind):
     assert flow.parse_args(["push", "--types", kind]).enabled_types == (kind,)
 
@@ -529,7 +531,9 @@ def test_every_sample_function_builds_with_real_sdk_parser(
         assert payload["returnType"]
 
 
-@pytest.mark.parametrize("kind", ["ai-functions", "canopy", "subscriptions"])
+@pytest.mark.parametrize(
+    "kind", ["ai-functions", "mcp-servers", "canopy", "subscriptions"]
+)
 def test_extra_resources_participate_in_env_placeholder_preflight(settings, kind):
     config, args, *_ = settings
     artefact(config, kind, {"description": "{{TEMPLATE_SYNTHETIC_MISSING_VALUE}}"})
@@ -1371,3 +1375,246 @@ def test_webhook_template_body_changes_reach_update(settings):
     assert len(client.writes) == 1
     assert client.writes[0][0:2] == ("PATCH", "/webhooks/hook")
     assert client.writes[0][2]["payload"]["templateBody"] == local["templateBody"]
+
+
+def mcp_server(**overrides):
+    return {
+        "name": "example-weather-tools",
+        "description": "Weather lookup tools for MCP clients.",
+        "enabled": True,
+        "isPublic": False,
+        "toolFunctions": [
+            {
+                "functionName": "searchLocations",
+                "functionContext": "public.weather",
+                "argumentConfig": [
+                    {"key": "name", "source": "ai"},
+                    {"key": "count", "source": "hardcoded", "value": 3},
+                    {"key": "format", "source": "hardcoded", "value": "json"},
+                    {
+                        "key": "apiKey",
+                        "source": "variable",
+                        "variableName": "token",
+                        "variableContext": "example.demo",
+                    },
+                ],
+            }
+        ],
+        "oauthClientId": "weather-client",
+        "oauthClientSecretVariable": {
+            "variableName": "oauthSecret",
+            "variableContext": "example.demo",
+        },
+        **overrides,
+    }
+
+
+MCP_RESOLVED = {
+    "name": "example-weather-tools",
+    "description": "Weather lookup tools for MCP clients.",
+    "enabled": True,
+    "isPublic": False,
+    "oauthClientId": "weather-client",
+    "oauthClientSecretVariableId": "secret-id",
+    "toolFunctions": [
+        {
+            "id": "search-id",
+            "argumentConfig": [
+                {"key": "name", "source": "ai"},
+                {"key": "count", "source": "hardcoded", "value": 3},
+                {"key": "format", "source": "hardcoded", "value": "json"},
+                {"key": "apiKey", "source": "variable", "variableId": "token-id"},
+            ],
+        }
+    ],
+}
+MCP_FUNCTIONS = [
+    {"id": "search-id", "name": "searchLocations", "context": "public.weather"}
+]
+MCP_VARIABLES = [
+    {"id": "token-id", "name": "token", "context": "example.demo"},
+    {"id": "secret-id", "name": "oauthSecret", "context": "example.demo"},
+]
+
+
+def mcp_client(servers=None):
+    responses = {
+        f"/functions/{kind}{suffix}": []
+        for kind in ("api", "server", "client")
+        for suffix in ("", "/tenant", "/public")
+    }
+    responses.update(
+        {
+            "/mcp-servers": servers or [],
+            "/functions/api": MCP_FUNCTIONS,
+            "/variables": MCP_VARIABLES,
+        }
+    )
+    # Like PolyAPI, only the single-server endpoint returns mcpUrl.
+    for identifier in ("created", "mcp-id"):
+        responses[f"/mcp-servers/{identifier}"] = {
+            "id": identifier,
+            "mcpUrl": f"https://example.invalid/mcp-servers/{identifier}/mcp",
+        }
+    return FakeClient(responses)
+
+
+def test_mcp_resolves_tools_variables_and_oauth_secret(settings):
+    config, *_ = settings
+    data = mcp_server()
+    assert (
+        flow.resolve_mcp_payload(data, MCP_FUNCTIONS, MCP_VARIABLES, config)
+        == MCP_RESOLVED
+    )
+    assert "functionName" in data["toolFunctions"][0]
+    cleared = flow.resolve_mcp_payload(
+        {"name": "cleared", "oauthClientSecretVariable": None}, [], [], config
+    )
+    assert cleared == {"name": "cleared", "oauthClientSecretVariableId": None}
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"toolFunctionIds": ["remote"]},
+        {"oauthClientSecretVariableId": "remote"},
+        {"environmentId": "remote"},
+        {"mcpUrl": "https://example.invalid/mcp"},
+        {"context": "example.demo"},
+        {"toolFunctions": [{"id": "remote"}]},
+        {
+            "toolFunctions": [
+                {
+                    "functionName": "searchLocations",
+                    "functionContext": "public.weather",
+                    "argumentConfig": [
+                        {"key": "apiKey", "source": "variable", "variableId": "x"}
+                    ],
+                }
+            ]
+        },
+        {"name": " "},
+    ],
+)
+def test_mcp_rejects_environment_specific_or_invalid_fields(settings, overrides):
+    config, *_ = settings
+    with pytest.raises(flow.DeployError):
+        flow.resolve_mcp_payload(
+            mcp_server(**overrides), MCP_FUNCTIONS, MCP_VARIABLES, config
+        )
+
+
+def test_mcp_variable_references_must_be_namespace_owned(settings):
+    config, args, logger, _ = settings
+    data = mcp_server(
+        oauthClientSecretVariable={
+            "variableName": "oauthSecret",
+            "variableContext": "other.demo",
+        }
+    )
+    with pytest.raises(flow.DeployError, match="POLYAPI_NAMESPACE"):
+        flow.resolve_mcp_payload(data, MCP_FUNCTIONS, MCP_VARIABLES, config)
+    artefact(config, "mcp-servers", data)
+    with pytest.raises(flow.DeployError, match="POLYAPI_NAMESPACE"):
+        flow.validate_local_namespace(config, args, logger)
+
+
+def test_mcp_local_preflight_needs_no_remote_records(settings):
+    config, args, logger, _ = settings
+    artefact(config, "mcp-servers", mcp_server())
+    config = replace(config, enabled_types=("mcp-servers",))
+    assert not flow.validate_local_artifacts(config, args, logger).invalid_paths
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_mcp_create_and_dry_run(settings, dry_run, capsys):
+    config, args, logger, summary = settings
+    artefact(config, "mcp-servers", mcp_server())
+    client = mcp_client()
+    assert flow.sync_mcp_servers(
+        client, config, replace(args, dry_run=dry_run), logger, summary, "env-1"
+    )
+    assert client.writes == (
+        [] if dry_run else [("POST", "/mcp-servers", {"payload": MCP_RESOLVED})]
+    )
+    assert summary.mcp_servers.created == 1
+    # The create response has no URL; it comes from the single-server endpoint.
+    lookups = [call[1] for call in client.calls if call[1] == "/mcp-servers/created"]
+    assert lookups == ([] if dry_run else ["/mcp-servers/created"])
+    printed = (
+        "https://example.invalid/mcp-servers/created/mcp" in capsys.readouterr().out
+    )
+    assert printed is not dry_run
+
+
+def test_mcp_url_lookup_failure_does_not_fail_the_sync(settings, capsys):
+    config, args, logger, summary = settings
+    artefact(config, "mcp-servers", mcp_server())
+    client = mcp_client()
+    client.responses["/mcp-servers/created"] = flow.DeployError("unavailable")
+    assert flow.sync_mcp_servers(client, config, args, logger, summary, "env-1")
+    assert summary.mcp_servers.created == 1
+    assert "Could not read the MCP URL for" in capsys.readouterr().out
+
+
+def test_mcp_matches_by_name_in_target_environment_and_patches_changes(
+    settings, capsys
+):
+    config, args, logger, summary = settings
+    artefact(config, "mcp-servers", mcp_server(enabled=False))
+    # Like PolyAPI's list, the remote record carries no mcpUrl.
+    remote = {
+        **MCP_RESOLVED,
+        "id": "mcp-id",
+        "environmentId": "env-1",
+        "createdAt": "2026-11-01T00:00:00Z",
+        "toolFunctionIds": ["search-id"],
+    }
+    url = "https://example.invalid/mcp-servers/mcp-id/mcp"
+    other_environment = {**remote, "id": "elsewhere", "environmentId": "env-2"}
+    client = mcp_client([other_environment, remote])
+    assert flow.sync_mcp_servers(client, config, args, logger, summary, "env-1")
+    assert client.writes == [
+        ("PATCH", "/mcp-servers/mcp-id", {"payload": {"enabled": False}})
+    ]
+    assert summary.mcp_servers.updated == 1
+    assert f"MCP URL for example-weather-tools: {url}" in capsys.readouterr().out
+
+    unchanged = flow.Summary()
+    artefact(config, "mcp-servers", mcp_server())
+    client = mcp_client([remote])
+    assert not flow.sync_mcp_servers(client, config, args, logger, unchanged, "env-1")
+    assert not client.writes
+    assert unchanged.mcp_servers.skipped == 1
+    assert f"MCP URL for example-weather-tools: {url}" in capsys.readouterr().out
+
+
+def test_mcp_duplicate_names_fail_before_any_write(settings):
+    config, args, logger, summary = settings
+    artefact(config, "mcp-servers", mcp_server())
+    duplicates = [
+        {**MCP_RESOLVED, "id": identifier, "environmentId": "env-1"}
+        for identifier in ("one", "two")
+    ]
+    client = mcp_client(duplicates)
+    with pytest.raises(flow.DeployError, match="2 MCP servers named"):
+        flow.sync_mcp_servers(client, config, args, logger, summary, "env-1")
+    assert not client.writes
+
+    artefact(config, "mcp-servers", mcp_server(), "second")
+    client = FakeClient()
+    with pytest.raises(flow.DeployError, match="Duplicate local MCP server name"):
+        flow.sync_mcp_servers(client, config, args, logger, summary, "env-1")
+    assert not client.calls
+
+
+def test_mcp_servers_are_never_orphans(settings):
+    config, args, logger, summary = settings
+    artefact(config, "mcp-servers", mcp_server())
+    stranger = {"id": "stranger", "name": "someone-else", "environmentId": "env-1"}
+    client = mcp_client([stranger])
+    flow.sync_mcp_servers(
+        client, config, replace(args, delete_orphans=True), logger, summary, "env-1"
+    )
+    assert [call[0] for call in client.writes] == ["POST"]
+    assert not summary.orphans

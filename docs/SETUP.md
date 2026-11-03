@@ -240,9 +240,22 @@ load the helper manually in the current terminal if needed. It does not change
 shell execution policies or replace an existing `flow` command.
 
 It then creates `main` with an initial commit, switches to `develop`, and opens
-VS Code. The [curl command](../README.md#getting-started) downloads a temporary
-public template snapshot; skills use a shallow HTTPS Git clone. No GitHub
-authentication is needed. The downloaded snapshot is removed after setup.
+VS Code. Without Git, it prints the commands that create the repository later;
+without a Git `user.name` and `user.email`, it initializes the repository but
+leaves the first commit to you. Without VS Code's `code` command, it prints the
+project path. The [curl command](../README.md#getting-started) downloads
+temporary public snapshots of the template and skills over HTTPS. No GitHub
+authentication is needed. The downloaded snapshots are removed after setup.
+
+Kickstart's only prerequisite is curl. When uv is missing, it runs Astral's
+[official installer](https://docs.astral.sh/uv/getting-started/installation/)
+for your user, without administrator rights; the installer adds uv to your
+shell profile, so open a new terminal afterwards. uv downloads the pinned
+Python when needed.
+
+Every yes/no prompt in kickstart and Flow shows `[y/N]`: Enter answers no, and
+only an explicit `y` or `yes` proceeds. This includes `flow setup`'s prompts to
+create and save the selected environment file.
 
 You can also run `bash kickstart/kickstart.sh` from an existing template
 checkout; that path includes pending source changes. Local configuration and
@@ -250,6 +263,25 @@ credential files are excluded from the new project. Kickstart does not deploy
 resources or train the sample APIs.
 The training skill must be available on `poly-skills/main`; setup stops with a
 clear message if it is missing.
+
+## Windows
+
+These recommendations have not yet been verified on a Windows machine; report
+problems with your Windows and WSL versions.
+
+Use [WSL 2](https://learn.microsoft.com/windows/wsl/install) with a Linux
+distribution such as Ubuntu, and run kickstart and all project commands in its
+terminal. Kickstart then follows the Linux path: it installs uv inside WSL and
+ignores Windows tools reached through `/mnt/<drive>/`, which cannot build a
+Linux project. Keep projects in the Linux file system, such as `~/projects`,
+rather than under `/mnt/c`; kickstart warns when the parent directory is on a
+Windows drive. Install VS Code on Windows with the
+[WSL extension](https://code.visualstudio.com/docs/remote/wsl); `code` in a WSL
+terminal then opens the project through it.
+
+Git Bash also provides the Bash, curl, and tar that kickstart needs, but WSL is
+the recommended Windows setup. Kickstart does not run in PowerShell or Command
+Prompt; the PowerShell `flow` helper is for existing checkouts.
 
 ## Guided setup with `flow`
 

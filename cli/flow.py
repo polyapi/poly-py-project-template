@@ -83,6 +83,7 @@ ArtifactType = Literal[
     "triggers",
     "schemas",
     "ai-functions",
+    "mcp-servers",
     "canopy",
     "subscriptions",
 ]
@@ -98,6 +99,7 @@ TypeSelectionToken = Literal[
     "triggers",
     "schemas",
     "ai-functions",
+    "mcp-servers",
     "canopy",
     "subscriptions",
 ]
@@ -142,6 +144,7 @@ DEFAULT_ENABLED_TYPES: tuple[ArtifactType, ...] = (
     "triggers",
     "schemas",
     "ai-functions",
+    "mcp-servers",
     "canopy",
     "subscriptions",
 )
@@ -160,6 +163,7 @@ SUPPORTED_TYPE_SELECTIONS: tuple[TypeSelectionToken, ...] = (
     "triggers",
     "schemas",
     "ai-functions",
+    "mcp-servers",
     "canopy",
     "subscriptions",
 )
@@ -897,6 +901,7 @@ ROOT_HELP_EPILOG = textwrap.dedent("""
 
     Notes:
       - Functions are discovered from inline polyConfig in Python source; no peer JSON is required.
+      - MCP servers have no namespace context: they match by exact name and are never orphans.
       - Scope shortcuts like `sample_workflow` and `utilities/common` resolve under `workflows/src/`.
     """).strip()
 PUSH_HELP_DESCRIPTION = textwrap.dedent("""
@@ -908,9 +913,10 @@ PUSH_HELP_DESCRIPTION = textwrap.dedent("""
       3. Tables and schemas
       4. Client and server functions
       5. AI functions
-      6. Webhooks and triggers
-      7. Jobs
-      8. GraphQL subscriptions
+      6. MCP servers
+      7. Webhooks and triggers
+      8. Jobs
+      9. GraphQL subscriptions
 
     Full syncs respect POLY_DEPLOY_PRIORITY_PATHS. In this repo that means
     `workflows/src/utilities` can be scanned before the rest of `workflows/src`.
@@ -932,10 +938,12 @@ PUSH_HELP_EPILOG = textwrap.dedent("""
 
     Supported --types values:
       functions, client-functions, server-functions, variables,
-            webhooks, jobs, tables, triggers, schemas, ai-functions, canopy, subscriptions
+            webhooks, jobs, tables, triggers, schemas, ai-functions, mcp-servers,
+            canopy, subscriptions
 
     Notes:
       - Functions are discovered from inline polyConfig in Python source; no peer JSON is required.
+      - MCP servers have no namespace context: they match by exact name and are never orphans.
       - {{ENV_NAME}} tokens in deployed JSON/JSONC files are substituted from the selected env file when defined.
       - Missing env-style placeholders trigger a preflight warning and confirmation prompt before sync.
       - Orphans are reported by default; pass --adopt-orphans to recreate supported remote artefacts locally or --delete-orphans to remove them.
@@ -1091,6 +1099,7 @@ class Summary:
     triggers: ArtifactStats = field(default_factory=ArtifactStats)
     schemas: ArtifactStats = field(default_factory=ArtifactStats)
     ai_functions: ArtifactStats = field(default_factory=ArtifactStats)
+    mcp_servers: ArtifactStats = field(default_factory=ArtifactStats)
     canopy: ArtifactStats = field(default_factory=ArtifactStats)
     subscriptions: ArtifactStats = field(default_factory=ArtifactStats)
     orphans: list[OrphanedResource] = field(default_factory=list)
@@ -1371,7 +1380,8 @@ def add_push_arguments(parser: argparse.ArgumentParser) -> None:
         help=(
             "Comma-separated artefact types to deploy. "
             "Supported values: functions,client-functions,server-functions,"
-            "variables,webhooks,jobs,tables,triggers,schemas,ai-functions,canopy,subscriptions."
+            "variables,webhooks,jobs,tables,triggers,schemas,ai-functions,"
+            "mcp-servers,canopy,subscriptions."
         ),
     )
     parser.add_argument(
@@ -3189,7 +3199,7 @@ def iter_preflight_json_patterns(config: DeployConfig) -> tuple[str, ...]:
         patterns.extend(config.schema_globs)
     if "triggers" in config.enabled_types:
         patterns.extend(config.trigger_globs)
-    for kind in ("ai-functions", "canopy", "subscriptions"):
+    for kind in ("ai-functions", "mcp-servers", "canopy", "subscriptions"):
         if kind in config.enabled_types:
             patterns.extend(extra_resource_globs(kind))
     return tuple(dict.fromkeys(patterns))
@@ -9221,12 +9231,19 @@ def extra_resource_files(
     config: DeployConfig, cli_args: CliArgs, kind: str
 ) -> list[ArtifactFile]:
     files = load_artifact_files(config, cli_args, extra_resource_globs(kind))
-    seen: set[tuple[Any, Any]] = set()
+    seen: set[Any] = set()
     selected = []
     for item in files:
         ensure_mapping(item.data, item.path)
         identity = (item.data.get("context"), item.data.get("name"))
-        if kind != "canopy":
+        if kind == "mcp-servers":
+            # MCP servers have no context; a unique name identifies each one.
+            if not isinstance(identity[1], str) or not identity[1].strip():
+                raise DeployError("MCP server name is required")
+            if identity[1] in seen:
+                raise DeployError("Duplicate local MCP server name")
+            seen.add(identity[1])
+        elif kind != "canopy":
             require_owned_context(identity[0], config)
             if not isinstance(identity[1], str) or not identity[1]:
                 raise DeployError("Resource name is required")
@@ -9331,6 +9348,16 @@ def validate_local_artifact(
                     if isinstance(argument, dict)
                     and argument.get("source") == "variable"
                 )
+    elif kind == "mcp-servers":
+        references = [
+            {
+                key: tool[key]
+                for key in ("functionName", "functionContext")
+                if key in tool
+            }
+            for tool in data.get("toolFunctions", [])
+            if isinstance(tool, dict)
+        ] + mcp_variable_references(data)
     if kind == "subscriptions":
 
         def collect_variables(value: Any) -> None:
@@ -9380,6 +9407,8 @@ def validate_local_artifact(
         )
     elif kind == "ai-functions":
         resolve_ai_payload(data, functions, variables, config)
+    elif kind == "mcp-servers":
+        resolve_mcp_payload(data, functions, variables, config)
     elif kind == "subscriptions":
         resolve_subscription_payload(data, functions, variables, config)
     elif kind == "canopy":
@@ -9401,7 +9430,7 @@ def validate_local_artifacts(
         "triggers": config.trigger_globs,
         **{
             kind: extra_resource_globs(kind)
-            for kind in ("ai-functions", "canopy", "subscriptions")
+            for kind in ("ai-functions", "mcp-servers", "canopy", "subscriptions")
         },
     }
     for kind in config.enabled_types:
@@ -9483,7 +9512,7 @@ def validate_local_namespace(
         "triggers": config.trigger_globs,
         **{
             kind: extra_resource_globs(kind)
-            for kind in ("ai-functions", "canopy", "subscriptions")
+            for kind in ("ai-functions", "mcp-servers", "canopy", "subscriptions")
         },
     }
     for kind in config.enabled_types:
@@ -9521,6 +9550,9 @@ def validate_local_namespace(
                     raise DeployError(
                         "Local jobs must reference namespace-owned functions"
                     )
+            elif kind == "mcp-servers":
+                for reference in mcp_variable_references(data):
+                    require_owned_context(reference.get("variableContext"), config)
             else:
                 require_owned_context(data.get("context"), config)
 
@@ -9899,6 +9931,245 @@ def sync_ai_functions(
         records,
     )
     return bool(plans) or deleted
+
+
+MCP_SERVER_FIELDS = frozenset(
+    {
+        "name",
+        "description",
+        "enabled",
+        "isPublic",
+        "toolFunctions",
+        "oauthClientId",
+        "oauthClientSecretVariable",
+        "oauthRedirectUris",
+    }
+)
+MCP_TOOL_FIELDS = frozenset({"functionName", "functionContext", "argumentConfig"})
+MCP_ARGUMENT_FIELDS = {
+    "ai": frozenset({"key", "source"}),
+    "hardcoded": frozenset({"key", "source", "value"}),
+    "argument": frozenset({"key", "source", "argumentKey"}),
+    "variable": frozenset({"key", "source", "variableName", "variableContext"}),
+}
+
+
+def mcp_variable_references(data: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return the variable references an MCP server artefact makes."""
+    references = []
+    secret = data.get("oauthClientSecretVariable")
+    if isinstance(secret, dict):
+        references.append(secret)
+    for tool in data.get("toolFunctions", []):
+        if isinstance(tool, dict):
+            references.extend(
+                argument
+                for argument in tool.get("argumentConfig", [])
+                if isinstance(argument, dict) and argument.get("source") == "variable"
+            )
+    return [
+        {
+            key: reference[key]
+            for key in ("variableName", "variableContext")
+            if key in reference
+        }
+        for reference in references
+    ]
+
+
+def resolve_mcp_payload(
+    data: dict[str, Any],
+    functions: list[dict[str, Any]],
+    variables: list[dict[str, Any]],
+    config: DeployConfig,
+) -> dict[str, Any]:
+    """Replace portable MCP tool and OAuth-secret references with API IDs."""
+    unsupported = sorted(set(data) - MCP_SERVER_FIELDS)
+    if unsupported:
+        raise DeployError(
+            "MCP server artefacts must use portable references; unsupported "
+            "field(s): " + ", ".join(unsupported)
+        )
+    if not isinstance(data.get("name"), str) or not data["name"].strip():
+        raise DeployError("MCP server name is required")
+    payload = copy.deepcopy(data)
+    if "oauthClientSecretVariable" in payload:
+        secret = payload.pop("oauthClientSecretVariable")
+        if secret is None:
+            payload["oauthClientSecretVariableId"] = None
+        elif isinstance(secret, dict) and set(secret) == {
+            "variableName",
+            "variableContext",
+        }:
+            payload["oauthClientSecretVariableId"] = variable_reference(
+                secret, variables, config
+            )
+        else:
+            raise DeployError(
+                "oauthClientSecretVariable needs variableName and variableContext, "
+                "or null"
+            )
+    if "toolFunctions" in payload:
+        if not isinstance(payload["toolFunctions"], list):
+            raise DeployError("toolFunctions must be an array")
+        resolved_tools = []
+        for tool in payload["toolFunctions"]:
+            if not isinstance(tool, dict) or set(tool) - MCP_TOOL_FIELDS:
+                raise DeployError(
+                    "MCP tool functions use only functionName, functionContext, "
+                    "and argumentConfig"
+                )
+            resolved: dict[str, Any] = {
+                "id": exact_reference(
+                    functions, tool.get("functionContext"), tool.get("functionName")
+                )
+            }
+            if "argumentConfig" in tool:
+                if not isinstance(tool["argumentConfig"], list):
+                    raise DeployError("argumentConfig must be an array")
+                arguments = []
+                for argument in tool["argumentConfig"]:
+                    allowed = (
+                        MCP_ARGUMENT_FIELDS.get(argument.get("source"))
+                        if isinstance(argument, dict)
+                        else None
+                    )
+                    if allowed is None or set(argument) != allowed:
+                        raise DeployError(
+                            "MCP tool arguments must use the fields of the ai, "
+                            "hardcoded, argument, or variable source"
+                        )
+                    argument = dict(argument)
+                    if argument["source"] == "variable":
+                        argument["variableId"] = variable_reference(
+                            argument, variables, config
+                        )
+                        argument.pop("variableName")
+                        argument.pop("variableContext")
+                    arguments.append(argument)
+                resolved["argumentConfig"] = arguments
+            resolved_tools.append(resolved)
+        payload["toolFunctions"] = resolved_tools
+    validate_endpoint_payload("CreateMCPServerDto", payload)
+    return payload
+
+
+def mcp_url(client: PolyApiClient, record: Any) -> str | None:
+    """Return a server's MCP URL.
+
+    Only GET /mcp-servers/{id} includes ``mcpUrl``; list items and create or
+    update responses omit it, so a record without one is looked up by ID.
+    """
+    if not isinstance(record, dict):
+        return None
+    url = record.get("mcpUrl")
+    if isinstance(url, str) and url:
+        return url
+    identifier = record.get("id")
+    if not isinstance(identifier, str) or not identifier:
+        return None
+    fetched = client.request("GET", f"/mcp-servers/{identifier}")
+    url = fetched.get("mcpUrl") if isinstance(fetched, dict) else None
+    return url if isinstance(url, str) and url else None
+
+
+def log_mcp_url(client: PolyApiClient, logger: Logger, name: str, record: Any) -> None:
+    # The URL is informational: a failed lookup must not fail a finished sync.
+    try:
+        url = mcp_url(client, record)
+    except DeployError:
+        logger.muted(f"Could not read the MCP URL for {name}.")
+        return
+    if url:
+        logger.info(f"MCP URL for {name}: {url}")
+
+
+def sync_mcp_servers(
+    client: PolyApiClient,
+    config: DeployConfig,
+    cli_args: CliArgs,
+    logger: Logger,
+    summary: Summary,
+    environment_id: str,
+) -> bool:
+    """Create or update MCP servers by exact name in the verified environment.
+
+    MCP servers carry no namespace context, so Flow cannot tell which remote
+    servers belong to this project: it never reports or deletes them as orphans.
+    """
+    files = extra_resource_files(config, cli_args, "mcp-servers")
+    if not files:
+        return False
+    records = [
+        item
+        for item in list_resources(client, "/mcp-servers")
+        if not isinstance(item.get("environmentId"), str)
+        or item["environmentId"] == environment_id
+    ]
+    functions = (
+        referenceable_functions(client, ("api", "server", "client"))
+        if any(item.data.get("toolFunctions") for item in files)
+        else []
+    )
+    variables = list_resources(client, "/variables")
+    include_planned_references(
+        config, cli_args, logger, functions, variables, ("server", "client")
+    )
+    logger.info(
+        "MCP servers have no namespace context: Flow matches them by exact name "
+        "and never reports or deletes them as orphans."
+    )
+    # Resolve and validate the whole selected group before its first write.
+    plans = []
+    for item in files:
+        payload = resolve_mcp_payload(item.data, functions, variables, config)
+        name = payload["name"]
+        if payload.get("isPublic") is True:
+            logger.warn(
+                f"MCP server {name} sets isPublic: true: anyone with its URL can "
+                "call its tools without signing in."
+            )
+        matches = [record for record in records if record.get("name") == name]
+        if len(matches) > 1:
+            raise DeployError(
+                f"{len(matches)} MCP servers named {name} exist in the target "
+                "environment; rename or remove the duplicates before syncing"
+            )
+        if not matches:
+            plans.append(("POST", "/mcp-servers", payload, name, None))
+            continue
+        remote = matches[0]
+        path = f"/mcp-servers/{resource_id(remote)}"
+        changes = {
+            key: value
+            for key, value in payload.items()
+            if value != project_remote(value, remote.get(key))
+        }
+        if not changes:
+            summary.mcp_servers.skipped += 1
+            log_mcp_url(client, logger, name, remote)
+            continue
+        validate_endpoint_payload("UpdateMCPServerDto", changes)
+        plans.append(("PATCH", path, changes, name, remote))
+    for method, path, payload, name, remote in plans:
+        logger.info(
+            f"{'Would apply' if cli_args.dry_run else 'Applying'} {method} {path}"
+        )
+        if cli_args.dry_run:
+            if remote is not None:
+                log_mcp_url(client, logger, name, remote)
+        else:
+            written = client.request(method, path, payload=payload)
+            record = written if isinstance(written, dict) else {}
+            # An update targets the matched server, whatever its response holds.
+            if remote is not None:
+                record = {**record, "id": resource_id(remote)}
+            log_mcp_url(client, logger, name, record)
+        if method == "POST":
+            summary.mcp_servers.created += 1
+        else:
+            summary.mcp_servers.updated += 1
+    return bool(plans)
 
 
 def validate_canopy(data: dict[str, Any], config: DeployConfig) -> None:
@@ -10339,7 +10610,7 @@ def run_flow(cli_args: CliArgs, report: dict[str, Any]) -> int:
     if cli_args.adopt_orphans:
         if any(
             kind in config.enabled_types
-            for kind in ("ai-functions", "canopy", "subscriptions")
+            for kind in ("ai-functions", "mcp-servers", "canopy", "subscriptions")
         ):
             raise DeployError(
                 "Orphan adoption supports core resources only; select explicit --types."
@@ -10425,6 +10696,9 @@ def run_flow(cli_args: CliArgs, report: dict[str, Any]) -> int:
 
     if "ai-functions" in config.enabled_types:
         sync_ai_functions(client, config, cli_args, logger, summary)
+
+    if "mcp-servers" in config.enabled_types:
+        sync_mcp_servers(client, config, cli_args, logger, summary, target_env_id)
 
     owned_function_registry = function_registry
     if "webhooks" in config.enabled_types:
