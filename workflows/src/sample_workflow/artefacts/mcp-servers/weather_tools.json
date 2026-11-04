@@ -1,0 +1,72 @@
+{
+  "name": "example-weather-tools",
+  "description": "Weather lookup for MCP clients: find a place with searchLocations, then read its current conditions with getCurrentWeather. Data from Open-Meteo.",
+  "enabled": true,
+  "isPublic": false,
+  "toolFunctions": [
+    {
+      "functionName": "searchLocations",
+      "functionContext": "example.sample_workflow",
+      "argumentConfig": [
+        {
+          "key": "name",
+          "source": "ai"
+        },
+        {
+          "key": "hostUrl",
+          "source": "hardcoded",
+          "value": "https://geocoding-api.open-meteo.com"
+        },
+        {
+          "key": "count",
+          "source": "hardcoded",
+          "value": 3
+        },
+        {
+          "key": "language",
+          "source": "hardcoded",
+          "value": "en"
+        },
+        {
+          "key": "format",
+          "source": "hardcoded",
+          "value": "json"
+        }
+      ]
+    },
+    {
+      "functionName": "getCurrentWeather",
+      "functionContext": "example.sample_workflow",
+      "argumentConfig": [
+        {
+          "key": "latitude",
+          "source": "ai"
+        },
+        {
+          "key": "longitude",
+          "source": "ai"
+        },
+        {
+          "key": "hostUrl",
+          "source": "hardcoded",
+          "value": "https://api.open-meteo.com"
+        },
+        {
+          "key": "current",
+          "source": "hardcoded",
+          "value": "temperature_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m"
+        },
+        {
+          "key": "temperatureUnit",
+          "source": "hardcoded",
+          "value": "celsius"
+        },
+        {
+          "key": "timezone",
+          "source": "hardcoded",
+          "value": "auto"
+        }
+      ]
+    }
+  ]
+}
