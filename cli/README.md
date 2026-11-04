@@ -511,6 +511,9 @@ For OAuth, set `oauthClientId`, `oauthRedirectUris`, and
 MCP servers have no namespace context. Flow therefore identifies each one by
 its exact `name` in the environment verified by `TARGET_ENV_ID`: it creates the
 server when that name is absent and PATCHes only changed fields when it exists.
+An artefact's `toolFunctions` list is the server's complete tool list: removing
+an entry removes that tool, and Flow also clears the legacy `toolFunctionIds`
+of servers created with it, which would otherwise stay callable.
 Choose a name that is unique in the target environment; duplicate local or
 remote names stop the sync before any write. Because Flow cannot tell which
 remote servers belong to this project, it never reports or deletes MCP servers

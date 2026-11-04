@@ -10145,6 +10145,11 @@ def sync_mcp_servers(
             for key, value in payload.items()
             if value != project_remote(value, remote.get(key))
         }
+        legacy = remote.get("toolFunctionIds")
+        if "toolFunctions" in payload and isinstance(legacy, list) and legacy:
+            # Servers created with the legacy toolFunctionIds field keep those
+            # tools callable alongside toolFunctions; syncing the list clears them.
+            changes["toolFunctionIds"] = []
         if not changes:
             summary.mcp_servers.skipped += 1
             log_mcp_url(client, logger, name, remote)
