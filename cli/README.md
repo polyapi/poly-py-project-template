@@ -500,9 +500,11 @@ coding agents and chat assistants. Keep each server in
 ```
 
 Tool references use `functionName` and `functionContext` and resolve against
-accessible API, server, and client functions, the same set used for AI function
-tools. Each `argumentConfig` entry uses the AI function sources: `ai` (the MCP
-client supplies it), `hardcoded`, `argument`, or a namespace-owned `variable`.
+accessible API and server functions. Client functions run in the caller's
+process, so the MCP endpoint cannot offer them; Flow rejects a tool that
+resolves only to a client function before any write. Each `argumentConfig`
+entry uses the AI function sources: `ai` (the MCP client supplies it),
+`hardcoded`, `argument`, or a namespace-owned `variable`.
 For OAuth, set `oauthClientId`, `oauthRedirectUris`, and
 `oauthClientSecretVariable` with `variableName` and `variableContext`; use
 `null` to clear the client ID or secret. Remote IDs such as `toolFunctionIds`,
@@ -511,6 +513,9 @@ For OAuth, set `oauthClientId`, `oauthRedirectUris`, and
 MCP servers have no namespace context. Flow therefore identifies each one by
 its exact `name` in the environment verified by `TARGET_ENV_ID`: it creates the
 server when that name is absent and PATCHes only changed fields when it exists.
+An artefact's `toolFunctions` list is the server's complete tool list: removing
+an entry removes that tool, and Flow also clears the legacy `toolFunctionIds`
+of servers created with it, which would otherwise stay callable.
 Choose a name that is unique in the target environment; duplicate local or
 remote names stop the sync before any write. Because Flow cannot tell which
 remote servers belong to this project, it never reports or deletes MCP servers

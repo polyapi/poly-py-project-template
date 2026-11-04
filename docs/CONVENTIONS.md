@@ -111,7 +111,8 @@ or establish the target environment; use a live dry run before deploying.
 - Expose only functions that are safe for an external model to call. Prefer
   read-only or bounded actions; keep authorization, destructive operations, and
   other consequential policy in deterministic code behind the tool.
-- Reference tools with `functionName` and `functionContext`, and fix provider
+- Reference API or server functions as tools with `functionName` and
+  `functionContext`; client functions cannot be MCP tools. Fix provider
   settings with `hardcoded` bindings or namespace-owned `variable` bindings.
 - Give each server a name that is unique in the target environment. MCP servers
   have no namespace context, so Flow matches them by name and never deletes them
