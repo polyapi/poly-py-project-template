@@ -187,6 +187,76 @@ def test_ai_patch_removes_tool_and_changes_only_mutable_fields(settings):
     ]
 
 
+def test_hardcoded_values_are_compared_whole_but_platform_fields_are_ignored():
+    remote = {
+        "id": "search-id",
+        "platformAdded": True,
+        "argumentConfig": [
+            {
+                "key": "options",
+                "source": "hardcoded",
+                "value": {"units": "metric", "legacy": {"flag": True}},
+            }
+        ],
+    }
+    removed = {
+        "id": "search-id",
+        "argumentConfig": [
+            {"key": "options", "source": "hardcoded", "value": {"units": "metric"}}
+        ],
+    }
+    assert flow.project_remote(removed, remote) != removed
+    nested = copy.deepcopy(removed)
+    nested["argumentConfig"][0]["value"] = {"units": "metric", "legacy": {}}
+    assert flow.project_remote(nested, remote) != nested
+    same = copy.deepcopy(remote)
+    del same["platformAdded"]
+    assert flow.project_remote(same, remote) == same
+
+
+def test_ai_patch_sends_a_hardcoded_value_with_a_removed_property(settings):
+    config, args, logger, summary = settings
+    tool = {
+        "functionName": "searchLocations",
+        "functionContext": "public.weather",
+        "argumentConfig": [
+            {"key": "options", "source": "hardcoded", "value": {"units": "metric"}}
+        ],
+    }
+    artefact(config, "ai-functions", ai_function(toolFunctions=[tool]))
+    deployed = {
+        "id": "search-id",
+        "argumentConfig": [
+            {
+                "key": "options",
+                "source": "hardcoded",
+                "value": {"units": "metric", "legacy": True},
+            }
+        ],
+    }
+    responses = {
+        f"/functions/{kind}{suffix}": []
+        for kind in ("api", "server", "client")
+        for suffix in ("", "/tenant", "/public")
+    }
+    responses.update(
+        {
+            "/functions/ai": [
+                {"id": "one", "name": "assistant", "context": "example.demo"}
+            ],
+            "/functions/ai/one": ai_function(toolFunctions=[deployed]),
+            "/functions/api": MCP_FUNCTIONS,
+            "/variables": [],
+        }
+    )
+    client = FakeClient(responses)
+    flow.sync_ai_functions(client, config, args, logger, summary)
+    sent = {**deployed, "argumentConfig": tool["argumentConfig"]}
+    assert client.writes == [
+        ("PATCH", "/functions/ai/one", {"payload": {"toolFunctions": [sent]}})
+    ]
+
+
 def test_ai_immutable_change_does_not_write(settings):
     config, args, logger, summary = settings
     artefact(config, "ai-functions", ai_function())
@@ -1665,6 +1735,40 @@ def test_mcp_same_named_function_in_this_environment_wins(settings):
     ]
     assert flow.sync_mcp_servers(client, config, args, logger, summary, "env-1")
     assert client.writes == [("POST", "/mcp-servers", {"payload": MCP_RESOLVED})]
+
+
+def test_mcp_patch_sends_a_hardcoded_value_with_a_removed_property(settings):
+    config, args, logger, summary = settings
+    artefact(config, "mcp-servers", mcp_server())
+    deployed = copy.deepcopy(MCP_RESOLVED)
+    deployed["toolFunctions"][0]["argumentConfig"][1]["value"] = 3
+    deployed["toolFunctions"][0]["argumentConfig"].append(
+        {"key": "extra", "source": "ai"}
+    )
+    remote = {**deployed, "id": "mcp-id", "environmentId": "env-1"}
+    client = mcp_client([remote])
+    flow.sync_mcp_servers(client, config, args, logger, summary, "env-1")
+    assert client.writes == [
+        (
+            "PATCH",
+            "/mcp-servers/mcp-id",
+            {"payload": {"toolFunctions": MCP_RESOLVED["toolFunctions"]}},
+        )
+    ]
+
+    # A JSON value that lost a property is sent whole.
+    local = mcp_server()
+    local["toolFunctions"][0]["argumentConfig"][1]["value"] = {"limit": 3}
+    artefact(config, "mcp-servers", local)
+    resolved = copy.deepcopy(MCP_RESOLVED["toolFunctions"])
+    resolved[0]["argumentConfig"][1]["value"] = {"limit": 3}
+    stale = copy.deepcopy(resolved)
+    stale[0]["argumentConfig"][1]["value"] = {"limit": 3, "legacy": True}
+    client = mcp_client([{**remote, "toolFunctions": stale}])
+    flow.sync_mcp_servers(client, config, args, logger, flow.Summary(), "env-1")
+    assert client.writes == [
+        ("PATCH", "/mcp-servers/mcp-id", {"payload": {"toolFunctions": resolved}})
+    ]
 
 
 def test_mcp_duplicate_names_fail_before_any_write(settings):

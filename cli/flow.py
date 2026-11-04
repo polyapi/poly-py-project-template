@@ -9716,7 +9716,14 @@ def matching_remote(
 def project_remote(local: Any, remote: Any) -> Any:
     if isinstance(local, dict) and isinstance(remote, dict):
         return {
-            key: project_remote(value, remote.get(key)) for key, value in local.items()
+            # A hardcoded binding's value is the user's own data, compared whole:
+            # projecting it would hide properties removed from a JSON value.
+            key: (
+                remote.get(key)
+                if key == "value" and local.get("source") == "hardcoded"
+                else project_remote(value, remote.get(key))
+            )
+            for key, value in local.items()
         }
     if isinstance(local, list) and isinstance(remote, list):
         # Keep length changes visible; removing a tool or UI row must cause an update.

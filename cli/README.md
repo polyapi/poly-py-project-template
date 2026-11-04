@@ -470,6 +470,10 @@ references. Create/update payloads are checked against the JSON schemas in
 automatically. Omitted fields are preserved; explicit empty arrays remove
 tools or arguments.
 
+When comparing AI function and MCP server tools, Flow ignores fields the
+platform adds, but compares each `hardcoded` value whole: removing a property
+from a JSON value, or an entry from an array, updates the deployed binding.
+
 ## MCP servers
 
 An MCP server exposes selected PolyAPI functions as tools to MCP clients such as
