@@ -640,6 +640,14 @@ ENVPATH=workflows/dev.env uv run --locked python -m cli.operations delete-conten
 ENVPATH=workflows/dev.env uv run --locked python -m cli.operations logs FUNCTION_ID --page 1 --page-size 100 --limit 100
 ```
 
+Before saving or training a translated model, Flow restores required header API
+keys omitted by translation, using operation security overrides and one security
+alternative. Existing Authorization prefixes and native authentication are kept;
+missing keys receive separate required string arguments. Ambiguous operation
+mappings or invalid security references stop training. The API-key endpoint
+validator accepts both native `key` and `value` entries, including after schema
+refresh. Already trained functions must be retrained to receive these headers.
+
 Training accepts OpenAPI 3.x and Swagger 2.0 JSON/YAML, a file or folder, and
 `{file}` in the target context. `hostUrl` becomes an API argument so the sample
 can inject a SECRET host at normal API execution. By default, API functions and

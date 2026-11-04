@@ -585,7 +585,8 @@
           "key": {
             "type": "string",
             "enum": [
-              "key"
+              "key",
+              "value"
             ]
           }
         },

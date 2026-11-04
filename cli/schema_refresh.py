@@ -145,6 +145,12 @@ def schema_document(schema: Any, spec: dict[str, Any]) -> dict[str, Any]:
 
 def patch_platform_quirks(name: str, document: dict[str, Any]) -> None:
     schemas = document.get("components", {}).get("schemas", {})
+    api_key_entry = (
+        schemas.get("KeyValueApiKeyEntrySource", {}).get("properties", {}).get("key")
+    )
+    if isinstance(api_key_entry, dict):
+        # Native API-key auth has separate key and value entries.
+        api_key_entry["enum"] = ["key", "value"]
     root = pointer(document, document["$ref"]) if "$ref" in document else document
     targets = [root, schemas.get(name, {})]
     if name in {"CreateTableDto", "UpdateTableDto"}:

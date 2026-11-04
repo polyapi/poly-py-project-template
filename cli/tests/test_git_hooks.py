@@ -51,13 +51,18 @@ def test_git_hook_runs_make_check_and_propagates_exit_status(
         f"#!{sys.executable}\n"
         "import json, os, pathlib, sys\n"
         "pathlib.Path('invocation.json').write_text(json.dumps({\n"
-        "    'args': sys.argv[1:], 'cwd': os.getcwd()\n"
+        "    'args': sys.argv[1:], 'cwd': os.getcwd(),\n"
+        "    'repository_env': {key: os.environ[key] for key in "
+        "('GIT_DIR', 'GIT_INDEX_FILE', 'GIT_PREFIX') if key in os.environ}\n"
         "}))\n"
         f"sys.exit({check_exit_code})\n"
     )
     make.chmod(0o755)
     nested = repo / "nested"
     nested.mkdir()
+    env["GIT_DIR"] = str(repo / ".git")
+    env["GIT_WORK_TREE"] = str(repo)
+    env["GIT_INDEX_FILE"] = str(repo / "fixture.index")
 
     result = subprocess.run(
         [GIT, "hook", "run", "pre-commit"],
@@ -71,6 +76,7 @@ def test_git_hook_runs_make_check_and_propagates_exit_status(
     assert json.loads((repo / "invocation.json").read_text()) == {
         "args": ["check"],
         "cwd": str(repo.resolve()),
+        "repository_env": {},
     }
 
 

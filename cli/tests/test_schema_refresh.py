@@ -15,6 +15,47 @@ from jsonschema import Draft7Validator
 from cli import schema_refresh as refresh
 
 
+@pytest.mark.parametrize("entry_key", ["key", "value"])
+def test_schema_refresh_preserves_both_native_api_key_entry_kinds(entry_key):
+    schema = {
+        "type": "object",
+        "components": {
+            "schemas": {
+                "KeyValueApiKeyEntrySource": {
+                    "type": "object",
+                    "properties": {
+                        "key": {"type": "string", "enum": ["key"]},
+                        "value": {"type": "string"},
+                    },
+                },
+            }
+        },
+    }
+    refresh.patch_platform_quirks("CreateApiFunctionDto", schema)
+    definition = schema["components"]["schemas"]["KeyValueApiKeyEntrySource"]
+    Draft7Validator(definition).validate({"key": entry_key, "value": "{{apiKey}}"})
+    assert not Draft7Validator(definition).is_valid({"key": "unknown", "value": "x"})
+
+
+@pytest.mark.parametrize("invalid", ["location", "entry", "length", "value_type"])
+def test_native_api_key_schema_still_rejects_invalid_auth(invalid):
+    from cli import flow
+    from cli.tests.test_openapi_security import model
+
+    function = model()["functions"][0]
+    entries = function["source"]["auth"]["apikey"]
+    if invalid == "location":
+        entries[0]["value"] = "cookie"
+    elif invalid == "entry":
+        entries[2]["key"] = "unknown"
+    elif invalid == "length":
+        entries.pop()
+    else:
+        entries[2]["value"] = 42
+    with pytest.raises(flow.DeployError):
+        flow.validate_endpoint_payload("CreateApiFunctionDto", function)
+
+
 def platform_spec():
     spec = {"openapi": "3.0.3", "paths": {}, "components": {"schemas": {}}}
     for name, (path, method) in refresh.TARGETS.items():

@@ -2,14 +2,30 @@
 """Run the project's checks before Git creates a commit."""
 
 from pathlib import Path
+import os
 import subprocess
 import sys
 
 
 def main() -> int:
     repo_root = Path(__file__).resolve().parents[1]
+    environment = os.environ.copy()
+    # Fixture repositories used by checks must not inherit this hook's repository.
+    for name in (
+        "GIT_DIR",
+        "GIT_COMMON_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_PREFIX",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_IMPLICIT_WORK_TREE",
+    ):
+        environment.pop(name, None)
     try:
-        return subprocess.run(["make", "check"], cwd=repo_root, check=False).returncode
+        return subprocess.run(
+            ["make", "check"], cwd=repo_root, env=environment, check=False
+        ).returncode
     except FileNotFoundError:
         print("pre-commit: make is required to run make check.", file=sys.stderr)
         return 1
