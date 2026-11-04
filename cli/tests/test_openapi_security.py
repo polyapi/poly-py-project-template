@@ -1,8 +1,73 @@
 import copy
+from types import SimpleNamespace
 
 import pytest
 
 from cli.openapi_security import reconcile_security
+
+
+def render_sdk(function):
+    from polyapi.api import render_api_function
+
+    arguments = [
+        {**argument, "type": {"kind": "primitive", "type": "string"}}
+        for argument in function["arguments"]
+    ]
+    source, _ = render_api_function(
+        "apiFunction",
+        "getMember",
+        "synthetic-id",
+        "Get member",
+        arguments,
+        {"kind": "any"},
+    )
+    return compile(
+        "from __future__ import annotations\n" + source, "<synthetic-api>", "exec"
+    )
+
+
+@pytest.mark.parametrize("promoted", [False, True])
+def test_repaired_required_arguments_precede_optional_arguments_in_sdk(promoted):
+    original = model()
+    original["functions"][0]["arguments"].append(
+        {"name": "page", "type": "string", "required": False}
+    )
+    if promoted:
+        original["functions"][0]["arguments"].append(
+            {"name": "xApiKey", "type": "string", "required": False}
+        )
+    result = reconcile_security(original, specification())["functions"][0]
+    assert [argument["name"] for argument in result["arguments"]] == [
+        "apiKey",
+        "xApiKey",
+        "page",
+    ]
+    render_sdk(result)
+
+
+@pytest.mark.parametrize("header,direct", [("execute", False), ("dict", True)])
+def test_restored_header_arguments_do_not_shadow_sdk_transport_or_builtins(
+    header, direct
+):
+    spec = specification()
+    spec["components"]["securitySchemes"]["ApiKey"]["name"] = header
+    result = reconcile_security(model(), spec)["functions"][0]
+    calls = []
+
+    def transport(kind, identifier, data):
+        calls.append(data)
+        return SimpleNamespace(status_code=200, headers={}, json=lambda: {"ok": True})
+
+    namespace = {
+        "get_direct_execute_config": lambda: direct,
+        "execute": transport,
+        "direct_execute": transport,
+        "_GetMember_types": SimpleNamespace(getMemberResponse=lambda value: value),
+    }
+    exec(render_sdk(result), namespace)
+    namespace["getMember"]("synthetic-auth", "synthetic-key")
+    name = "header" + header.title()
+    assert calls == [{"apiKey": "synthetic-auth", name: "synthetic-key"}]
 
 
 def specification():
@@ -163,6 +228,10 @@ def test_existing_header_case_and_disabled_header_replacement():
         ("this", "headerThis"),
         ("eval", "headerEval"),
         ("arguments", "headerArguments"),
+        ("execute", "headerExecute"),
+        ("dict", "headerDict"),
+        ("constructor", "headerConstructor"),
+        ("prototype", "headerPrototype"),
         ("123-key", "header123Key"),
     ],
 )

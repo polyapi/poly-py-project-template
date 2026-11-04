@@ -118,6 +118,10 @@ def _argument_name(header: str) -> str:
             "this",
             "eval",
             "arguments",
+            "execute",
+            "dict",
+            "constructor",
+            "prototype",
             "enum",
             "export",
             "extends",
@@ -176,6 +180,8 @@ def _restore_header(function: dict[str, Any], scheme: dict[str, Any]) -> None:
                 "description": f"API key for the {scheme['name']} request header.",
             }
         )
+    # Generated Python/TypeScript signatures require required parameters first.
+    arguments.sort(key=lambda argument: not argument.get("required", False))
     source["headers"] = [
         header
         for header in source.get("headers", [])
