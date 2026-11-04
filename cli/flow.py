@@ -9982,13 +9982,45 @@ def mcp_variable_references(data: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+def mcp_tool_reference(
+    tool: dict[str, Any],
+    functions: list[dict[str, Any]],
+    client_functions: list[dict[str, Any]],
+) -> str:
+    """Resolve a tool to an API or server function ID.
+
+    The MCP endpoint runs tools on PolyAPI, so it leaves out client functions,
+    which run in the caller's process. A tool that names only a client function
+    fails here instead of deploying a server whose tool silently disappears.
+    """
+    context, name = tool.get("functionContext"), tool.get("functionName")
+
+    def named(records: list[dict[str, Any]]) -> bool:
+        return any(
+            (item.get("context"), item.get("name")) == (context, name)
+            for item in records
+        )
+
+    if not named(functions) and named(client_functions):
+        raise DeployError(
+            f"Tool function {context}.{name} is a client function, which MCP "
+            "servers cannot call; expose an API or server function instead"
+        )
+    return exact_reference(functions, context, name)
+
+
 def resolve_mcp_payload(
     data: dict[str, Any],
     functions: list[dict[str, Any]],
     variables: list[dict[str, Any]],
     config: DeployConfig,
+    client_functions: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Replace portable MCP tool and OAuth-secret references with API IDs."""
+    """Replace portable MCP tool and OAuth-secret references with API IDs.
+
+    ``functions`` holds API and server functions; ``client_functions`` only
+    turns a reference to a client function into a clear error.
+    """
     unsupported = sorted(set(data) - MCP_SERVER_FIELDS)
     if unsupported:
         raise DeployError(
@@ -10025,9 +10057,7 @@ def resolve_mcp_payload(
                     "and argumentConfig"
                 )
             resolved: dict[str, Any] = {
-                "id": exact_reference(
-                    functions, tool.get("functionContext"), tool.get("functionName")
-                )
+                "id": mcp_tool_reference(tool, functions, client_functions or [])
             }
             if "argumentConfig" in tool:
                 if not isinstance(tool["argumentConfig"], list):
@@ -10111,14 +10141,16 @@ def sync_mcp_servers(
         if not isinstance(item.get("environmentId"), str)
         or item["environmentId"] == environment_id
     ]
-    functions = (
-        referenceable_functions(client, ("api", "server", "client"))
-        if any(item.data.get("toolFunctions") for item in files)
-        else []
-    )
+    functions: list[dict[str, Any]] = []
+    client_functions: list[dict[str, Any]] = []
+    if any(item.data.get("toolFunctions") for item in files):
+        # MCP tools run on PolyAPI: only API and server functions qualify.
+        # Client functions are read only to explain a rejected reference.
+        functions = referenceable_functions(client, ("api", "server"))
+        client_functions = referenceable_functions(client, ("client",))
     variables = list_resources(client, "/variables")
     include_planned_references(
-        config, cli_args, logger, functions, variables, ("server", "client")
+        config, cli_args, logger, functions, variables, ("server",)
     )
     logger.info(
         "MCP servers have no namespace context: Flow matches them by exact name "
@@ -10127,7 +10159,9 @@ def sync_mcp_servers(
     # Resolve and validate the whole selected group before its first write.
     plans = []
     for item in files:
-        payload = resolve_mcp_payload(item.data, functions, variables, config)
+        payload = resolve_mcp_payload(
+            item.data, functions, variables, config, client_functions
+        )
         name = payload["name"]
         if payload.get("isPublic") is True:
             logger.warn(
@@ -10150,6 +10184,11 @@ def sync_mcp_servers(
             for key, value in payload.items()
             if value != project_remote(value, remote.get(key))
         }
+        legacy = remote.get("toolFunctionIds")
+        if "toolFunctions" in payload and isinstance(legacy, list) and legacy:
+            # Servers created with the legacy toolFunctionIds field keep those
+            # tools callable alongside toolFunctions; syncing the list clears them.
+            changes["toolFunctionIds"] = []
         if not changes:
             summary.mcp_servers.skipped += 1
             log_mcp_url(client, logger, name, remote)
