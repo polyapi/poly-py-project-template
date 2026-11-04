@@ -1,4 +1,5 @@
 import copy
+import re
 import json
 from dataclasses import replace
 from pathlib import Path
@@ -1627,6 +1628,43 @@ def test_mcp_syncing_the_tool_list_clears_legacy_tool_function_ids(settings):
         client, config, args, logger, flow.Summary(), "env-1"
     )
     assert not client.writes
+
+
+@pytest.mark.parametrize(
+    "elsewhere, reason",
+    [
+        ("/functions/client", "is a client function, which MCP servers cannot call"),
+        ("/functions/api/tenant", "is shared from another environment or tenant"),
+        ("/functions/server/public", "is shared from another environment or tenant"),
+        (None, "was not found among API or server functions in this environment"),
+    ],
+)
+def test_mcp_tools_must_be_api_or_server_functions_in_the_environment(
+    settings, elsewhere, reason
+):
+    config, args, logger, summary = settings
+    artefact(config, "mcp-servers", mcp_server())
+    client = mcp_client()
+    client.responses["/functions/api"] = []
+    if elsewhere:
+        client.responses[elsewhere] = MCP_FUNCTIONS
+    with pytest.raises(
+        flow.DeployError, match=re.escape(f"public.weather.searchLocations {reason}")
+    ):
+        flow.sync_mcp_servers(client, config, args, logger, summary, "env-1")
+    assert not client.writes
+
+
+def test_mcp_same_named_function_in_this_environment_wins(settings):
+    config, args, logger, summary = settings
+    artefact(config, "mcp-servers", mcp_server())
+    client = mcp_client()
+    client.responses["/functions/client"] = [{**MCP_FUNCTIONS[0], "id": "client-id"}]
+    client.responses["/functions/api/public"] = [
+        {**MCP_FUNCTIONS[0], "id": "shared-id"}
+    ]
+    assert flow.sync_mcp_servers(client, config, args, logger, summary, "env-1")
+    assert client.writes == [("POST", "/mcp-servers", {"payload": MCP_RESOLVED})]
 
 
 def test_mcp_duplicate_names_fail_before_any_write(settings):

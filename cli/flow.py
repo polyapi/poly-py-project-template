@@ -9977,13 +9977,78 @@ def mcp_variable_references(data: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+def mcp_tool_reference(
+    tool: dict[str, Any],
+    functions: list[dict[str, Any]],
+    shared_functions: list[dict[str, Any]],
+    client_functions: list[dict[str, Any]],
+) -> str:
+    """Resolve a tool to an API or server function in the target environment.
+
+    The MCP endpoint runs tools there, so it leaves out client functions, which
+    run in the caller's process, and functions shared from other environments or
+    tenants. Referencing one fails here, with the reason, rather than deploying
+    a server whose tool silently disappears.
+    """
+    context, name = tool.get("functionContext"), tool.get("functionName")
+    if (
+        not isinstance(context, str)
+        or not isinstance(name, str)
+        or not context
+        or not name
+    ):
+        raise DeployError("Portable references require an exact context and name")
+    label = f"{context}.{name}"
+
+    def named(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [
+            item
+            for item in records
+            if (item.get("context"), item.get("name")) == (context, name)
+        ]
+
+    usable = {
+        item["id"]
+        for item in named(functions)
+        if isinstance(item.get("id"), str) and item["id"]
+    }
+    if len(usable) == 1:
+        return usable.pop()
+    if usable:
+        raise DeployError(
+            f"Tool function {label} is ambiguous across API and server functions "
+            "in this environment"
+        )
+    if named(shared_functions):
+        raise DeployError(
+            f"Tool function {label} is shared from another environment or tenant; "
+            "MCP servers can only call API or server functions in their own "
+            "environment"
+        )
+    if named(client_functions):
+        raise DeployError(
+            f"Tool function {label} is a client function, which MCP servers cannot "
+            "call; use an API or server function in this environment"
+        )
+    raise DeployError(
+        f"Tool function {label} was not found among API or server functions in "
+        "this environment"
+    )
+
+
 def resolve_mcp_payload(
     data: dict[str, Any],
     functions: list[dict[str, Any]],
     variables: list[dict[str, Any]],
     config: DeployConfig,
+    shared_functions: list[dict[str, Any]] | None = None,
+    client_functions: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Replace portable MCP tool and OAuth-secret references with API IDs."""
+    """Replace portable MCP tool and OAuth-secret references with API IDs.
+
+    ``functions`` holds the target environment's API and server functions. The
+    shared and client lists only turn a rejected reference into a clear error.
+    """
     unsupported = sorted(set(data) - MCP_SERVER_FIELDS)
     if unsupported:
         raise DeployError(
@@ -10020,8 +10085,8 @@ def resolve_mcp_payload(
                     "and argumentConfig"
                 )
             resolved: dict[str, Any] = {
-                "id": exact_reference(
-                    functions, tool.get("functionContext"), tool.get("functionName")
+                "id": mcp_tool_reference(
+                    tool, functions, shared_functions or [], client_functions or []
                 )
             }
             if "argumentConfig" in tool:
@@ -10106,14 +10171,22 @@ def sync_mcp_servers(
         if not isinstance(item.get("environmentId"), str)
         or item["environmentId"] == environment_id
     ]
-    functions = (
-        referenceable_functions(client, ("api", "server", "client"))
-        if any(item.data.get("toolFunctions") for item in files)
-        else []
-    )
+    functions: list[dict[str, Any]] = []
+    shared_functions: list[dict[str, Any]] = []
+    client_functions: list[dict[str, Any]] = []
+    if any(item.data.get("toolFunctions") for item in files):
+        # MCP tools run in the target environment: only its own API and server
+        # functions qualify. The others are read to explain a rejection.
+        for kind in ("api", "server"):
+            functions.extend(list_resources(client, f"/functions/{kind}"))
+            for scope in ("tenant", "public"):
+                shared_functions.extend(
+                    list_optional_scope_resources(client, f"/functions/{kind}/{scope}")
+                )
+        client_functions = referenceable_functions(client, ("client",))
     variables = list_resources(client, "/variables")
     include_planned_references(
-        config, cli_args, logger, functions, variables, ("server", "client")
+        config, cli_args, logger, functions, variables, ("server",)
     )
     logger.info(
         "MCP servers have no namespace context: Flow matches them by exact name "
@@ -10122,7 +10195,9 @@ def sync_mcp_servers(
     # Resolve and validate the whole selected group before its first write.
     plans = []
     for item in files:
-        payload = resolve_mcp_payload(item.data, functions, variables, config)
+        payload = resolve_mcp_payload(
+            item.data, functions, variables, config, shared_functions, client_functions
+        )
         name = payload["name"]
         if payload.get("isPublic") is True:
             logger.warn(
