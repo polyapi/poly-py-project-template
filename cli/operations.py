@@ -14,6 +14,7 @@ import yaml
 
 from cli import flow
 from cli.openapi_conversion import swagger_to_openapi
+from cli.openapi_security import reconcile_security
 from cli.openapi_preparation import (
     clean_descriptions,
     normalize_schema_names,
@@ -323,6 +324,12 @@ def train_openapi(
             if disable_ai
             else enrich_model(client, translated, config, context)
         )
+        try:
+            document = yaml.safe_load(text)
+            if isinstance(document, dict):
+                model = reconcile_security(model, document)
+        except ValueError as error:
+            raise flow.DeployError(str(error)) from None
         model = validate_model(rename_model(model, renames or []), config)
         output = path.with_suffix(".poly.json")
         output.write_text(json.dumps(model, indent=2) + "\n", encoding="utf-8")

@@ -37,6 +37,81 @@ def api_model():
     }
 
 
+@pytest.mark.parametrize("disable_ai", [True, False])
+@pytest.mark.parametrize("literal", [True, False])
+@pytest.mark.parametrize("generate_only", [True, False])
+def test_training_restores_required_api_key_before_saving_or_upserting(
+    config, disable_ai, literal, generate_only
+):
+    from cli.tests.test_openapi_security import model, specification
+
+    translated = model()
+    function = translated["functions"][0]
+    if literal:
+        function["source"]["auth"] = {"type": "noauth"}
+        function["source"]["headers"] = [
+            {"key": "Authorization", "value": "JWT {{apiKey}}"}
+        ]
+    writes = []
+
+    def request(method, endpoint, **kwargs):
+        if endpoint == "/specification-input/oas":
+            return copy.deepcopy(translated)
+        if endpoint == "/functions/api/description-generation":
+            return {
+                key: copy.deepcopy(function[key])
+                for key in ("name", "description", "arguments")
+            }
+        assert method == "PUT" and endpoint == "/functions/api"
+        writes.append(kwargs["payload"])
+
+    client = Mock()
+    client.request.side_effect = request
+    path = config.repo_root / "secured.json"
+    operations.train_openapi(
+        client,
+        [(path, "example.demo", json.dumps(specification()))],
+        config,
+        dry_run=False,
+        generate_only=generate_only,
+        overwrite_model=False,
+        disable_ai=disable_ai,
+    )
+    saved = json.loads(path.with_suffix(".poly.json").read_text())
+    assert writes == ([] if generate_only else saved["functions"])
+    restored = saved["functions"][0]
+    assert {header["key"] for header in restored["source"]["headers"]} >= {"x-api-key"}
+    assert (
+        next(arg for arg in restored["arguments"] if arg["name"] == "xApiKey")[
+            "required"
+        ]
+        is True
+    )
+    assert restored["source"]["auth"] == function["source"]["auth"]
+
+
+def test_ambiguous_security_stops_before_model_save_and_training(config):
+    from cli.tests.test_openapi_security import model, specification
+
+    spec = specification()
+    spec["paths"]["/members/{other}/"] = {"get": {"security": []}}
+    client = Mock()
+    client.request.return_value = model()
+    path = config.repo_root / "ambiguous.json"
+    with pytest.raises(flow.DeployError, match="Ambiguous"):
+        operations.train_openapi(
+            client,
+            [(path, "example.demo", json.dumps(spec))],
+            config,
+            dry_run=False,
+            generate_only=False,
+            overwrite_model=False,
+            disable_ai=True,
+        )
+    assert client.request.call_count == 1
+    assert not path.with_suffix(".poly.json").exists()
+
+
 def test_default_training_enriches_names_descriptions_and_arguments(config):
     path = config.repo_root / "api.json"
     original = api_model()
