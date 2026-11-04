@@ -749,7 +749,8 @@ Downloads carry no API credentials and do not follow redirects.
 
 Refresh rebuilds endpoint JSON validators under `cli/schemas/`, including local
 component references and the known platform schema corrections. All contracts
-are resolved and checked before files are replaced. Missing optional AI endpoints
+are resolved and checked before files are replaced. This includes the MCP server
+create and update contracts. Missing optional AI function or MCP server endpoints
 retain their existing validators. Review the resulting changes before committing.
 
 `POLYAPI_DESIGNS_DIR` or `--designs-dir` selects a directory containing one local
