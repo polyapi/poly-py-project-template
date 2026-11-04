@@ -1562,13 +1562,14 @@ def test_mcp_matches_by_name_in_target_environment_and_patches_changes(
 ):
     config, args, logger, summary = settings
     artefact(config, "mcp-servers", mcp_server(enabled=False))
-    # Like PolyAPI's list, the remote record carries no mcpUrl.
+    # Like PolyAPI's list, the remote record carries no mcpUrl, and a server
+    # created from toolFunctions has no legacy toolFunctionIds.
     remote = {
         **MCP_RESOLVED,
         "id": "mcp-id",
         "environmentId": "env-1",
         "createdAt": "2026-11-01T00:00:00Z",
-        "toolFunctionIds": ["search-id"],
+        "toolFunctionIds": None,
     }
     url = "https://example.invalid/mcp-servers/mcp-id/mcp"
     other_environment = {**remote, "id": "elsewhere", "environmentId": "env-2"}
@@ -1587,6 +1588,63 @@ def test_mcp_matches_by_name_in_target_environment_and_patches_changes(
     assert not client.writes
     assert unchanged.mcp_servers.skipped == 1
     assert f"MCP URL for example-weather-tools: {url}" in capsys.readouterr().out
+
+
+def test_mcp_syncing_the_tool_list_clears_legacy_tool_function_ids(settings):
+    config, args, logger, summary = settings
+    legacy = {
+        **MCP_RESOLVED,
+        "id": "mcp-id",
+        "environmentId": "env-1",
+        "toolFunctionIds": ["old-tool-id"],
+    }
+    artefact(config, "mcp-servers", mcp_server())
+    client = mcp_client([legacy])
+    assert flow.sync_mcp_servers(client, config, args, logger, summary, "env-1")
+    assert client.writes == [
+        ("PATCH", "/mcp-servers/mcp-id", {"payload": {"toolFunctionIds": []}})
+    ]
+
+    artefact(config, "mcp-servers", mcp_server(toolFunctions=[]))
+    client = mcp_client([legacy])
+    flow.sync_mcp_servers(client, config, args, logger, flow.Summary(), "env-1")
+    assert client.writes == [
+        (
+            "PATCH",
+            "/mcp-servers/mcp-id",
+            {"payload": {"toolFunctions": [], "toolFunctionIds": []}},
+        )
+    ]
+
+    # An artefact that does not manage tools leaves them alone.
+    unmanaged = mcp_server()
+    del unmanaged["toolFunctions"]
+    artefact(config, "mcp-servers", unmanaged)
+    client = mcp_client([legacy])
+    assert not flow.sync_mcp_servers(
+        client, config, args, logger, flow.Summary(), "env-1"
+    )
+    assert not client.writes
+
+
+def test_mcp_rejects_client_function_tools_before_any_write(settings):
+    config, args, logger, summary = settings
+    artefact(config, "mcp-servers", mcp_server())
+    client = mcp_client()
+    client.responses["/functions/api"] = []
+    client.responses["/functions/client"] = MCP_FUNCTIONS
+    with pytest.raises(
+        flow.DeployError,
+        match="public.weather.searchLocations is a client function",
+    ):
+        flow.sync_mcp_servers(client, config, args, logger, summary, "env-1")
+    assert not client.writes
+
+    # A same-named API or server function is still the tool.
+    client = mcp_client()
+    client.responses["/functions/client"] = [{**MCP_FUNCTIONS[0], "id": "client-id"}]
+    assert flow.sync_mcp_servers(client, config, args, logger, flow.Summary(), "env-1")
+    assert client.writes == [("POST", "/mcp-servers", {"payload": MCP_RESOLVED})]
 
 
 def test_mcp_duplicate_names_fail_before_any_write(settings):
