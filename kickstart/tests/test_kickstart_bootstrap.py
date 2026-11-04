@@ -306,6 +306,7 @@ def fake_skills(skills, environment):
     training = skills / "polyapi-python/skills/api-function-training"
     training.mkdir()
     (training / "SKILL.md").write_text("Synthetic training fixture\n")
+    return skills.with_name("skills.tar.gz")
 
 module.download_skills = fake_skills
 
@@ -315,6 +316,12 @@ def controlled_run(command, **kwargs):
             os.environ["SIGNAL_UV"], "run", "--offline", "--no-project", "--no-config",
             "--python", os.environ["SIGNAL_PYTHON"], "python", "-B", "-u", "-c", child_code
         ], **kwargs)
+    elif command[5:8] == ["cli/flow.py", "skills", "add"]:
+        # Flow installs from the archive kickstart downloaded and checked.
+        assert command[command.index("--source") + 1].endswith("skills.tar.gz")
+        training = Path(kwargs["cwd"]) / ".agents/skills/api-function-training"
+        training.mkdir(parents=True)
+        (training / "SKILL.md").write_text("Synthetic training fixture\n")
     elif command[:2] == ["git", "init"]:
         (folder / "git-phase").touch()
     elif command[0] == "code":

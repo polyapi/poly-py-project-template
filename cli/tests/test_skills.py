@@ -1,6 +1,7 @@
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -138,6 +139,72 @@ def make_project(root: Path) -> Path:
     return root
 
 
+def archive_of(upstream: Upstream, destination: Path, treeish: str = "HEAD") -> Path:
+    """The repository as GitHub serves it: a .tar.gz with a root folder."""
+    upstream.git(
+        "archive",
+        "--format=tar.gz",
+        "--prefix=poly-skills-main/",
+        "--output",
+        str(destination),
+        treeish,
+    )
+    return destination
+
+
+class FakeResponse:
+    def __init__(self, body: bytes | None) -> None:
+        self.body = body or b""
+        self.status_code = 200 if body is not None else 404
+        self.ok = body is not None
+
+    def iter_content(self, size: int):
+        for start in range(0, len(self.body), size):
+            yield self.body[start : start + size]
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        return False
+
+
+@pytest.fixture
+def serve_archive(monkeypatch):
+    """Serve an archive in place of codeload.github.com, recording the URLs."""
+    urls: list[str] = []
+
+    def serve(body: bytes | None) -> list[str]:
+        def get(url, **kwargs):
+            assert kwargs["stream"] is True and kwargs["timeout"]
+            urls.append(url)
+            return FakeResponse(body)
+
+        monkeypatch.setattr(skills.requests, "get", get)
+        return urls
+
+    return serve
+
+
+def summary(snapshot) -> dict:
+    """Compare snapshots by what is installed and recorded."""
+    return {
+        "commit": snapshot.commit,
+        "skills": [
+            {
+                "name": skill.name,
+                "source": skill.source,
+                "digest": skill.digest,
+                "files": sorted(
+                    file.path + (" (executable)" if file.executable else "")
+                    for file in skill.files
+                ),
+            }
+            for skill in snapshot.skills
+        ],
+    }
+
+
 def args(upstream: Upstream, *argv: str) -> SkillsArgs:
     return parse_args([*argv, "--source", str(upstream.root)])
 
@@ -189,10 +256,28 @@ def test_parses_skills_commands_and_rejects_unsupported_input(tmp_path):
         (["remove"], 'Unknown skills command "remove"'),
         (["update", "--ref", "main..other"], "Invalid --ref"),
         (["update", "--source", "https://example.test/skills.git"], "--source must"),
+        (["update", "--source", "https://github.com/../poly-skills"], "--source must"),
+        (["update", "--source", "http://github.com/example/skills"], "--source must"),
         (["update", "--force"], "Unknown option"),
     ):
         with pytest.raises(SkillsError, match=message):
             parse_args(argv)
+    assert SKILLS_SOURCE == "https://github.com/polyapi/poly-skills"
+    assert (
+        parse_args(
+            ["update", "--source", "https://github.com/example/poly-skills.git"]
+        ).source
+        == "https://github.com/example/poly-skills"
+    )
+    archive = tmp_path / "skills.tar.gz"
+    notes = tmp_path / "skills.txt"
+    archive.write_bytes(b"")
+    notes.write_bytes(b"")
+    assert parse_args(["update", "--source", str(archive)]).source == str(
+        archive.resolve()
+    )
+    with pytest.raises(SkillsError, match="--source must"):
+        parse_args(["update", "--source", str(notes)])
 
 
 def test_add_installs_the_packs_of_the_chosen_setup_and_records_them(upstream, project):
@@ -467,6 +552,123 @@ def test_fetch_refuses_links_protected_files_and_missing_packs(tmp_path):
         fetch_skills(str(missing.root), "main", ("general", "polyapi-python"))
     with pytest.raises(SkillsError, match="Fetching no-such-branch from .* failed"):
         fetch_skills(str(missing.root), "no-such-branch", ("general",))
+
+
+def test_a_github_archive_yields_the_same_skills_and_commit_as_git(upstream, tmp_path):
+    # Over 100 characters, so the archive stores the path in a pax header.
+    long = (
+        "polyapi-common/skills/polyapi-constructs/references/"
+        + "deep/" * 12
+        + "NOTES.md"
+    )
+    head = upstream.commit({long: "# Notes\n"})
+    packs = ("general", "polyapi-common", "polyapi-python")
+
+    from_git = fetch_skills(str(upstream.root), "main", packs)
+    from_archive = fetch_skills(
+        str(archive_of(upstream, tmp_path / "skills.tar.gz")), "main", packs
+    )
+
+    assert from_archive.commit == head
+    assert summary(from_archive) == summary(from_git)
+    assert any(
+        "scripts/check.sh (executable)" in skill["files"]
+        for skill in summary(from_archive)["skills"]
+    )
+    assert any(
+        file.path == "/".join(long.split("/")[3:])
+        for skill in from_archive.skills
+        for file in skill.files
+    )
+
+
+def test_add_installs_from_a_downloaded_archive_file_as_kickstart_does(
+    upstream, project, tmp_path
+):
+    archive = archive_of(upstream, tmp_path / "skills.tar.gz")
+    run = Run(project)
+    run_skills(parse_args(["add", "python", "--source", str(archive)]), run.runtime)
+
+    assert installed(project) == [
+        "README.md",
+        "clean-code",
+        "markdownlint-compliance",
+        "polyapi-constructs",
+        "polyapi-sdk",
+    ]
+    lock = read_skills_lock(project)
+    assert (lock["commit"], lock["ref"]) == (upstream.head, "main")
+    assert "source" not in lock, "archive files are not recorded"
+    assert re.search(r"from poly-skills main \([0-9a-f]{7}\)", run.text)
+
+
+def test_the_default_source_downloads_the_public_archive_without_git(
+    upstream, tmp_path, serve_archive
+):
+    urls = serve_archive(archive_of(upstream, tmp_path / "skills.tar.gz").read_bytes())
+    root = make_project(tmp_path / "default")
+    run_skills(parse_args(["add", "python"]), Run(root).runtime)
+
+    assert urls == ["https://codeload.github.com/polyapi/poly-skills/tar.gz/main"]
+    lock = read_skills_lock(root)
+    assert lock["commit"] == upstream.head
+    assert "source" not in lock, "the default source is not recorded"
+    assert "polyapi-sdk" in installed(root)
+
+    other = make_project(tmp_path / "other")
+    run_skills(
+        parse_args(
+            [
+                "add",
+                "python",
+                "--source",
+                "https://github.com/example/skills",
+                "--ref",
+                "release/1.0",
+            ]
+        ),
+        Run(other).runtime,
+    )
+    assert urls[1] == "https://codeload.github.com/example/skills/tar.gz/release/1.0"
+    assert read_skills_lock(other)["source"] == "https://github.com/example/skills"
+
+
+def test_a_missing_repository_reports_the_status_and_the_ssh_alternative(
+    serve_archive,
+):
+    serve_archive(None)
+    with pytest.raises(
+        SkillsError,
+        match=r"Downloading main from https://github\.com/example/skills failed "
+        r"\(HTTP 404\).*git@github\.com:example/skills\.git",
+    ):
+        fetch_skills("https://github.com/example/skills", "main", ("general",))
+
+
+def test_archives_with_links_without_a_commit_or_unreadable_are_refused(tmp_path):
+    linked = Upstream(tmp_path / "linked")
+    (linked.root / "general/skills/clean-code/linked.md").symlink_to(
+        "../../../general/README.md"
+    )
+    linked.commit({})
+    with pytest.raises(
+        SkillsError,
+        match="Refusing a link or unsupported entry in poly-skills: "
+        "general/skills/clean-code/linked.md",
+    ):
+        fetch_skills(
+            str(archive_of(linked, tmp_path / "linked.tar.gz")), "main", ("general",)
+        )
+
+    upstream = Upstream(tmp_path / "tree")
+    tree = archive_of(upstream, tmp_path / "tree.tar.gz", "HEAD^{tree}")
+    with pytest.raises(SkillsError, match="does not record its commit"):
+        fetch_skills(str(tree), "main", ("general",))
+
+    broken = tmp_path / "skills.tgz"
+    broken.write_text("Not Found", encoding="utf-8")
+    with pytest.raises(SkillsError, match=r"not a valid \.tar\.gz file"):
+        fetch_skills(str(broken), "main", ("general",))
 
 
 def test_rejects_lock_files_it_cannot_trust(project):

@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass, field
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -23,11 +24,17 @@ import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 from typing import Any, Callable, Iterable, Literal
+import urllib.parse
 import uuid
+import zlib
 
-SKILLS_SOURCE = "git@github.com:polyapi/poly-skills.git"
+import requests
+
+# poly-skills is public: its archive downloads over HTTPS without Git or SSH.
+SKILLS_SOURCE = "https://github.com/polyapi/poly-skills"
 SKILLS_REF = "main"
 SKILLS_DIRECTORY = ".agents/skills"
 SKILLS_LOCK_FILE = ".agents/flow-skills.json"
@@ -55,7 +62,14 @@ SKILL_SETUPS = (
 # The default answer to the setup prompt in this Python template.
 RECOMMENDED_SETUP = "python"
 
+HTTPS_SOURCE = re.compile(
+    r"^https://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?/?$"
+)
 SSH_SOURCE = re.compile(r"^git@github\.com:[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\.git)?$")
+ARCHIVE_FILE = re.compile(r"\.(?:tar\.gz|tgz)$", re.I)
+COMMIT = re.compile(r"^[0-9a-f]{40}(?:[0-9a-f]{24})?$")
+# Far above any skills snapshot; a larger archive is refused, not read.
+MAX_ARCHIVE_BYTES = 64 * 1024 * 1024
 REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
 SKILL_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 DIGEST = re.compile(r"^[0-9a-f]{64}$")
@@ -189,16 +203,31 @@ def normalize_setups(names: Iterable[str]) -> tuple[str, ...]:
     return tuple(setup.id for setup in SKILL_SETUPS if setup.id in requested)
 
 
+def https_repository(source: str) -> tuple[str, str] | None:
+    match = HTTPS_SOURCE.match(source)
+    if not match or any(set(part) == {"."} for part in match.groups()):
+        return None
+    return match.group(1), match.group(2)
+
+
+def is_remote_source(source: str) -> bool:
+    return https_repository(source) is not None or bool(SSH_SOURCE.match(source))
+
+
 def resolve_source(value: str | None) -> str:
     if value is None:
         return SKILLS_SOURCE
+    repository = https_repository(value)
+    if repository:
+        return "https://github.com/" + "/".join(repository)
     if SSH_SOURCE.match(value):
         return value
     path = Path(value).expanduser()
-    if not path.is_dir():
+    if not (path.is_dir() or (path.is_file() and ARCHIVE_FILE.search(path.name))):
         raise SkillsError(
-            "--source must be a local Git directory or "
-            "git@github.com:owner/repository.git."
+            "--source must be https://github.com/owner/repository, "
+            "git@github.com:owner/repository.git, a local Git repository, or a "
+            ".tar.gz archive downloaded from GitHub."
         )
     return str(path.resolve())
 
@@ -273,9 +302,12 @@ Options:
   --dry-run        Show the plan without changing files
   -y, --yes        Without asking, replace folders that have local changes or
                    were not installed by Flow when poly-skills differs
-  --source SOURCE  git@github.com:owner/repository.git or a local Git repository
-                   (committed files only; default: {SKILLS_SOURCE})
-  --ref REF        Branch, tag, or commit to fetch (default: {SKILLS_REF})
+  --source SOURCE  https://github.com/owner/repository (public; no Git needed),
+                   git@github.com:owner/repository.git, a local Git repository
+                   (committed files only), or a .tar.gz archive downloaded
+                   from GitHub (default: {SKILLS_SOURCE})
+  --ref REF        Branch, tag, or commit to fetch (default: {SKILLS_REF});
+                   for an archive file, the ref it was downloaded from
   -h, --help       Show this help
 
 Local edits are kept until poly-skills changes that skill. Delete a skill
@@ -300,8 +332,66 @@ def digest_files(files: Iterable[tuple[str, bytes]]) -> str:
     return digest.hexdigest()
 
 
-def fetch_skills(source: str, ref: str, packs: tuple[str, ...]) -> SkillsSnapshot:
-    """Fetch committed skill folders of the given packs without a checkout."""
+@dataclass(frozen=True)
+class SnapshotEntry:
+    """A file or other entry of a poly-skills snapshot, relative to its root."""
+
+    filename: str
+    # Only regular files are installed; links and other entries are refused.
+    regular: bool
+    executable: bool
+    read: Callable[[], bytes]
+
+
+def collect_skills(
+    entries: Iterable[SnapshotEntry], commit: str, ref: str, packs: tuple[str, ...]
+) -> SkillsSnapshot:
+    """Validate the entries under the packs' `skills/` folders and group them."""
+    folders: dict[str, tuple[str, list[SkillFile]]] = {}
+    for entry in entries:
+        filename = entry.filename
+        parts = filename.split("/")
+        if len(parts) < 3 or parts[0] not in packs or parts[1] != "skills":
+            raise SkillsError(f"Unexpected poly-skills path: {filename}")
+        pack, _skills, name, *rest = parts
+        # Files directly under <pack>/skills/, such as a README, are not skills.
+        if not rest:
+            continue
+        if not SKILL_NAME.match(name):
+            raise SkillsError(
+                "Refusing a skill folder with an unsupported name: "
+                f"{pack}/skills/{name}"
+            )
+        if "\\" in filename or any(
+            not part or part in (".", "..") or protected_name(part) for part in rest
+        ):
+            raise SkillsError(f"Refusing a protected or unsafe skill path: {filename}")
+        if not entry.regular:
+            raise SkillsError(
+                f"Refusing a link or unsupported entry in poly-skills: {filename}"
+            )
+        key = f"{pack}/skills/{name}"
+        folders.setdefault(key, (name, []))[1].append(
+            SkillFile("/".join(rest), entry.read(), entry.executable)
+        )
+    skills = tuple(
+        UpstreamSkill(
+            name,
+            key,
+            tuple(files),
+            digest_files((file.path, file.content) for file in files),
+        )
+        for key, (name, files) in folders.items()
+        if any(file.path == "SKILL.md" for file in files)
+    )
+    for pack in packs:
+        if not any(skill.source.startswith(f"{pack}/skills/") for skill in skills):
+            raise SkillsError(f"poly-skills {ref} has no skills in {pack}/skills.")
+    return SkillsSnapshot(commit, skills)
+
+
+def fetch_git_skills(source: str, ref: str, packs: tuple[str, ...]) -> SkillsSnapshot:
+    """Fetch committed skill folders with Git, without a checkout."""
     with tempfile.TemporaryDirectory(prefix="flow-skills-") as repository:
 
         def git(args: list[str], label: str) -> bytes:
@@ -344,56 +434,112 @@ def fetch_skills(source: str, ref: str, packs: tuple[str, ...]) -> SkillsSnapsho
             ],
             "Listing poly-skills",
         ).decode("utf-8")
-        folders: dict[str, tuple[str, list[SkillFile]]] = {}
-        for entry in filter(None, listing.split("\0")):
+
+        def tree_entry(entry: str) -> SnapshotEntry:
             match = re.fullmatch(r"(\d+) (\w+) ([0-9a-f]+)\t(.+)", entry, re.S)
             if not match:
                 raise SkillsError("Unexpected Git tree entry in poly-skills.")
             mode, kind, obj, filename = match.groups()
-            parts = filename.split("/")
-            if len(parts) < 3 or parts[0] not in packs or parts[1] != "skills":
-                raise SkillsError(f"Unexpected poly-skills path: {filename}")
-            pack, _skills, name, *rest = parts
-            # Files directly under <pack>/skills/, such as a README, are not skills.
-            if not rest:
-                continue
-            if not SKILL_NAME.match(name):
-                raise SkillsError(
-                    "Refusing a skill folder with an unsupported name: "
-                    f"{pack}/skills/{name}"
-                )
-            if "\\" in filename or any(
-                not part or part in (".", "..") or protected_name(part) for part in rest
-            ):
-                raise SkillsError(
-                    f"Refusing a protected or unsafe skill path: {filename}"
-                )
-            if kind != "blob" or mode not in ("100644", "100755"):
-                raise SkillsError(
-                    f"Refusing a link or unsupported entry in poly-skills: {filename}"
-                )
-            key = f"{pack}/skills/{name}"
-            folders.setdefault(key, (name, []))[1].append(
-                SkillFile(
-                    "/".join(rest),
-                    git(["cat-file", "blob", obj], f"Reading {filename}"),
-                    mode == "100755",
-                )
+            return SnapshotEntry(
+                filename,
+                kind == "blob" and mode in ("100644", "100755"),
+                mode == "100755",
+                lambda: git(["cat-file", "blob", obj], f"Reading {filename}"),
             )
-    skills = tuple(
-        UpstreamSkill(
-            name,
-            key,
-            tuple(files),
-            digest_files((file.path, file.content) for file in files),
+
+        return collect_skills(
+            [tree_entry(entry) for entry in filter(None, listing.split("\0"))],
+            commit,
+            ref,
+            packs,
         )
-        for key, (name, files) in folders.items()
-        if any(file.path == "SKILL.md" for file in files)
-    )
-    for pack in packs:
-        if not any(skill.source.startswith(f"{pack}/skills/") for skill in skills):
-            raise SkillsError(f"poly-skills {ref} has no skills in {pack}/skills.")
-    return SkillsSnapshot(commit, skills)
+
+
+def read_skills_archive(
+    archive: bytes, ref: str, packs: tuple[str, ...]
+) -> SkillsSnapshot:
+    """Read the skills of the given packs from a `.tar.gz` archive of poly-skills.
+
+    GitHub and `git archive` record the commit ID in the archive's global pax
+    `comment` header.
+    """
+    invalid = "The skills archive is not a valid .tar.gz file."
+    prefixes = tuple(f"{pack}/skills/" for pack in packs)
+    entries: list[SnapshotEntry] = []
+    try:
+        with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as bundle:
+            members = bundle.getmembers()
+            if sum(member.size for member in members) > MAX_ARCHIVE_BYTES:
+                raise SkillsError("The skills archive is too large.")
+            commit = bundle.pax_headers.get("comment", "")
+            for member in members:
+                # GitHub archives hold one root folder, such as poly-skills-main/.
+                filename = "/".join(member.name.split("/")[1:])
+                if member.isdir() or not filename.startswith(prefixes):
+                    continue
+                content = b""
+                if member.isfile():
+                    stream = bundle.extractfile(member)
+                    content = stream.read() if stream else b""
+                entries.append(
+                    SnapshotEntry(
+                        filename,
+                        member.isfile(),
+                        bool(member.mode & 0o111),
+                        lambda content=content: content,
+                    )
+                )
+    except (tarfile.TarError, OSError, EOFError, zlib.error):
+        raise SkillsError(invalid) from None
+    if not COMMIT.match(commit):
+        raise SkillsError(
+            "The skills archive does not record its commit. "
+            "Use an archive downloaded from GitHub."
+        )
+    return collect_skills(entries, commit, ref, packs)
+
+
+def download_archive(source: str, ref: str) -> bytes:
+    """Download a public GitHub repository's archive; no Git or sign-in needed."""
+    repository = https_repository(source)
+    if repository is None:
+        raise SkillsError(f"Unsupported skills source: {source}")
+    owner, name = repository
+    archive_ref = "/".join(urllib.parse.quote(part, safe="") for part in ref.split("/"))
+    url = f"https://codeload.github.com/{owner}/{name}/tar.gz/{archive_ref}"
+    failed = f"Downloading {ref} from {source} failed"
+    try:
+        with requests.get(url, timeout=(30, 180), stream=True) as response:
+            if not response.ok:
+                raise SkillsError(
+                    f"{failed} (HTTP {response.status_code}). Check the repository "
+                    "and --ref; for a private repository, use --source "
+                    f"git@github.com:{owner}/{name}.git."
+                )
+            chunks: list[bytes] = []
+            size = 0
+            for chunk in response.iter_content(64 * 1024):
+                size += len(chunk)
+                if size > MAX_ARCHIVE_BYTES:
+                    raise SkillsError(f"{failed}: the archive is too large.")
+                chunks.append(chunk)
+    except requests.RequestException as error:
+        raise SkillsError(f"{failed}: {type(error).__name__}.") from None
+    return b"".join(chunks)
+
+
+def fetch_skills(source: str, ref: str, packs: tuple[str, ...]) -> SkillsSnapshot:
+    """Fetch the skill folders of the given packs.
+
+    Sources are a public GitHub archive over HTTPS, a downloaded archive file,
+    or, with Git, an SSH repository or local checkout.
+    """
+    if https_repository(source):
+        return read_skills_archive(download_archive(source, ref), ref, packs)
+    path = Path(source)
+    if not SSH_SOURCE.match(source) and ARCHIVE_FILE.search(source) and path.is_file():
+        return read_skills_archive(path.read_bytes(), ref, packs)
+    return fetch_git_skills(source, ref, packs)
 
 
 def resolve_setup_skills(
@@ -642,8 +788,9 @@ def build_lock(
             entries[item.skill.name] = item.recorded
     entries.update(plan.retired)
     lock: dict[str, Any] = {"version": LOCK_VERSION, "setups": list(setups)}
-    # Recorded for remote sources only; local checkouts are not portable.
-    if SSH_SOURCE.match(args.source):
+    # Recorded for remote sources other than the default only; local
+    # checkouts and archives are not portable.
+    if args.source != SKILLS_SOURCE and is_remote_source(args.source):
         lock["source"] = args.source
     lock.update(ref=args.ref, commit=commit, skills=dict(sorted(entries.items())))
     return lock

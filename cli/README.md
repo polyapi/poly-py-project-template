@@ -178,15 +178,20 @@ To reinstall a skill, delete its folder and run `update`. CRLF line endings and
 file browser metadata such as `.DS_Store` do not count as local edits.
 `--dry-run` prints the plan without changing files.
 
-Kickstart runs `flow skills add python --yes`, which replaces the template's
-bundled skill copies with the poly-skills versions. In an existing checkout,
+Kickstart runs `flow skills add python --yes` on the poly-skills archive it
+has already downloaded and checked, which replaces the template's bundled skill
+copies with the poly-skills versions. In an existing checkout,
 `flow skills add python` marks the bundled copies `!` because they are reviewed
 template copies that Flow did not install; keep or replace each set as needed.
 
-Skills are fetched with your GitHub SSH access from
-`git@github.com:polyapi/poly-skills.git`. `--ref` selects a branch, tag, or
-commit, and `--source` selects another GitHub SSH repository or a local Git
-checkout (committed files only); both apply to that run only. Links, protected
+Skills are downloaded over HTTPS as the public poly-skills archive, so Flow
+needs neither Git nor GitHub sign-in. `--ref` selects a branch, tag, or commit.
+`--source` selects another public GitHub repository
+(`https://github.com/owner/repository`), a private one through Git over SSH
+(`git@github.com:owner/repository.git`), a local Git checkout (committed files
+only), or a `.tar.gz` archive downloaded from GitHub. Both options apply to
+that run only; the lock records a source only when it is another GitHub
+repository. Links, protected
 files such as `.env` files or keys, and unsupported entries stop the command
 before files change. Skills commands use no environment file, PolyAPI
 connection, or target verification.

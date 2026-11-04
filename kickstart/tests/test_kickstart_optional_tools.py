@@ -43,12 +43,14 @@ def test_skills_archive_is_downloaded_with_curl_and_its_root_removed(
     )
     destination = tmp_path / "work" / "skills"
     destination.parent.mkdir()
-    kickstart.download_skills(destination, {})
+    kept = kickstart.download_skills(destination, {})
     assert (destination / "polyapi-python/skills/demo/SKILL.md").read_text() == (
         "Synthetic\n"
     )
     assert kickstart.SKILLS_ARCHIVE in calls[0]
-    assert not destination.with_name("skills.tar.gz").exists()
+    # Flow installs from the archive itself, which records the commit.
+    assert kept == destination.with_name("skills.tar.gz")
+    assert kept.read_bytes() == archive.read_bytes()
 
 
 def test_skills_archive_cannot_write_outside_its_destination(tmp_path, fake_curl):

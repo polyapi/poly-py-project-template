@@ -85,8 +85,12 @@ def git_usable(environment: dict[str, str] | None = None) -> bool:
     )
 
 
-def download_skills(destination: Path, environment: dict[str, str]) -> None:
-    """Fetch the public skills snapshot with curl, kickstart's one prerequisite."""
+def download_skills(destination: Path, environment: dict[str, str]) -> Path:
+    """Fetch the public skills snapshot with curl, kickstart's one prerequisite.
+
+    The archive is kept next to the extracted copy: Flow installs from it,
+    because it records the poly-skills commit.
+    """
     archive = destination.with_name("skills.tar.gz")
     subprocess.run(
         [
@@ -113,7 +117,7 @@ def download_skills(destination: Path, environment: dict[str, str]) -> None:
                 member.name = str(Path(*parts))
                 members.append(member)
         bundle.extractall(destination, members=members, filter="data")
-    archive.unlink()
+    return archive
 
 
 def initialize_git(target: Path, environment: dict[str, str]) -> None:
@@ -348,7 +352,7 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="poly-py-kickstart-") as temporary:
         skills = Path(temporary) / "skills"
         print("Downloading PolyAPI skills...", flush=True)
-        download_skills(skills, environment)
+        skills_archive = download_skills(skills, environment)
         categories = ("general", "polyapi-common", "polyapi-python")
         for category in categories:
             if not (skills / category / "skills").is_dir():
@@ -373,8 +377,8 @@ def main() -> int:
                 ["uv", "sync", "--locked"], cwd=target, env=environment, check=True
             )
             print("Installing agent skills...", flush=True)
-            # Install from the checkout fetched above. Flow records the setup and
-            # revision in .agents/flow-skills.json for `flow skills update`; --yes
+            # Install from the archive checked above. Flow records the setup and
+            # commit in .agents/flow-skills.json for `flow skills update`; --yes
             # replaces the template's bundled copies with the poly-skills versions.
             subprocess.run(
                 [
@@ -389,7 +393,7 @@ def main() -> int:
                     "python",
                     "--yes",
                     "--source",
-                    str(skills),
+                    str(skills_archive),
                 ],
                 cwd=target,
                 env=environment,
