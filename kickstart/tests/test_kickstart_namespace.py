@@ -146,10 +146,20 @@ def test_real_sample_guides_and_artefacts_stay_aligned(tmp_path, namespace):
     assert {tool["functionContext"] for tool in ai_definition["toolFunctions"]} == {
         f"{namespace}.sample_workflow"
     }
+    tool_prefix = namespace.replace(".", "_")
+    assert f"`{slug_of(namespace)}-weather-tools`" in ai
+    assert f'"name":"{tool_prefix}_sample_workflow_searchLocations"' in ai
+    for name in files[:7]:
+        content = (tmp_path / name).read_text()
+        assert not re.search(r"example-weather-tools|example_sample_workflow_", content)
     server = json.loads((tmp_path / files[-1]).read_text())
     slug = namespace.replace(".", "-").replace("_", "-")
     assert server["name"] == f"{slug}-weather-tools"
     assert server["toolFunctions"] == ai_definition["toolFunctions"]
+
+
+def slug_of(namespace):
+    return namespace.replace(".", "-").replace("_", "-")
 
 
 def test_env_example_namespace_and_webhook_slug_are_personalized(tmp_path):

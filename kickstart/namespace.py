@@ -108,9 +108,15 @@ def rewrite_markdown_code(code: str, namespace: str) -> str:
         code,
     )
     slug = namespace.replace(".", "-").replace("_", "-")
-    return re.sub(
-        r"(?<![\w./:@-])example-(?=motd\b|workflow\b)",
+    code = re.sub(
+        r"(?<![\w./:@-])example-(?=motd\b|workflow\b|weather-tools\b)",
         lambda match: slug + "-",
+        code,
+    )
+    # MCP clients see tool names built from the context, with dots as underscores.
+    return re.sub(
+        r"(?<![\w./:@-])example_(?=sample_workflow_\w)",
+        lambda match: namespace.replace(".", "_") + "_",
         code,
     )
 
