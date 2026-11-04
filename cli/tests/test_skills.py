@@ -554,6 +554,20 @@ def test_fetch_refuses_links_protected_files_and_missing_packs(tmp_path):
         fetch_skills(str(missing.root), "no-such-branch", ("general",))
 
 
+def test_git_fetch_ignores_a_repository_named_by_the_environment(upstream, monkeypatch):
+    # A hook or wrapper can export GIT_DIR; the shallow fetch must not land there.
+    head = upstream.commit({"general/skills/clean-code/NOTES.md": "# Notes\n"})
+    monkeypatch.setenv("GIT_DIR", str(upstream.root / ".git"))
+
+    snapshot = fetch_skills(str(upstream.root), "main", ("general",))
+
+    monkeypatch.delenv("GIT_DIR")
+    assert snapshot.commit == head
+    assert upstream.git("rev-parse", "--is-shallow-repository") == "false"
+    assert upstream.git("rev-list", "--count", "HEAD") == "2"
+    assert not (upstream.root / ".git/FETCH_HEAD").exists()
+
+
 def test_a_github_archive_yields_the_same_skills_and_commit_as_git(upstream, tmp_path):
     # Over 100 characters, so the archive stores the path in a pax header.
     long = (
