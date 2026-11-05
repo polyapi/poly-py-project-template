@@ -40,8 +40,13 @@ TARGETS = {
     "CreateApiFunctionDto": ("/functions/api", "post"),
     "CreateAiFunctionV2Dto": ("/functions/ai", "post"),
     "UpdateAiFunctionV2Dto": ("/functions/ai/{id}", "patch"),
+    "CreateMCPServerDto": ("/mcp-servers", "post"),
+    "UpdateMCPServerDto": ("/mcp-servers/{id}", "patch"),
 }
-OPTIONAL_TARGETS = {"CreateAiFunctionV2Dto", "UpdateAiFunctionV2Dto"}
+AI_FUNCTION_TARGETS = {"CreateAiFunctionV2Dto", "UpdateAiFunctionV2Dto"}
+MCP_SERVER_TARGETS = {"CreateMCPServerDto", "UpdateMCPServerDto"}
+# Instances without these endpoints keep their existing validators.
+OPTIONAL_TARGETS = AI_FUNCTION_TARGETS | MCP_SERVER_TARGETS
 
 
 class SchemaRefreshError(ValueError):
@@ -157,6 +162,14 @@ def patch_platform_quirks(name: str, document: dict[str, Any]) -> None:
         properties = schemas.get("TableColumnDto", {}).get("properties", {})
         if "default" in properties:
             properties["default"] = True
+    if name in MCP_SERVER_TARGETS:
+        argument = schemas.get("MCPToolFunctionArgumentConfigDto", {}).get(
+            "properties", {}
+        )
+        if "value" in argument:
+            # Hardcoded tool values can be strings, numbers, booleans, or JSON, as
+            # for AI function tools; the OpenAPI document describes them as objects.
+            argument["value"] = True
     for target in targets:
         properties = target.get("properties", {})
         if (
@@ -180,7 +193,7 @@ def patch_platform_quirks(name: str, document: dict[str, Any]) -> None:
             target["required"] = [
                 item for item in target["required"] if item != "templateBody"
             ]
-        if name in OPTIONAL_TARGETS and properties:
+        if name in AI_FUNCTION_TARGETS and properties:
             properties.update(
                 type={"type": "string"},
                 apiType={"type": "string"},

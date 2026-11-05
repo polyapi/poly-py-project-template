@@ -108,9 +108,15 @@ def rewrite_markdown_code(code: str, namespace: str) -> str:
         code,
     )
     slug = namespace.replace(".", "-").replace("_", "-")
-    return re.sub(
-        r"(?<![\w./:@-])example-(?=motd\b|workflow\b)",
+    code = re.sub(
+        r"(?<![\w./:@-])example-(?=motd\b|workflow\b|weather-tools\b)",
         lambda match: slug + "-",
+        code,
+    )
+    # MCP clients see tool names built from the context, with dots as underscores.
+    return re.sub(
+        r"(?<![\w./:@-])example_(?=sample_workflow_\w)",
+        lambda match: namespace.replace(".", "_") + "_",
         code,
     )
 
@@ -204,6 +210,16 @@ def rewrite_namespace(root: Path, namespace: str) -> None:
         elif file.suffix == ".json":
             before = json.loads(original)
             after = replace_json(before)
+            name = after.get("name") if isinstance(after, dict) else None
+            if (
+                "mcp-servers" in file.parts
+                and isinstance(name, str)
+                and name.startswith("example-")
+            ):
+                # MCP servers have no context; their environment-unique name,
+                # such as example-weather-tools, carries the root instead.
+                slug = namespace.replace(".", "-").replace("_", "-")
+                after = {**after, "name": slug + name[len("example") :]}
             updated = (
                 json.dumps(after, indent=2, ensure_ascii=False) + "\n"
                 if after != before

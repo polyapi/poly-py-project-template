@@ -114,6 +114,7 @@ def test_real_sample_guides_and_artefacts_stay_aligned(tmp_path, namespace):
         "workflows/src/sample_workflow/artefacts/vari/advice_api_config.json",
         "workflows/src/utilities/common/client/log_cfx.py",
         "workflows/src/sample_workflow/artefacts/ai-functions/uplifting_weather.json",
+        "workflows/src/sample_workflow/artefacts/mcp-servers/weather_tools.json",
     )
     for name in files:
         target = tmp_path / name
@@ -140,11 +141,25 @@ def test_real_sample_guides_and_artefacts_stay_aligned(tmp_path, namespace):
     utilities = (tmp_path / files[6]).read_text()
     assert f"poly.{namespace}.utilities.log" in utilities
     assert "OOB.polyapi.internal.alerting.sendAlertToPoly" in utilities
-    ai_definition = json.loads((tmp_path / files[-1]).read_text())
+    ai_definition = json.loads((tmp_path / files[-2]).read_text())
     assert ai_definition["context"] == f"{namespace}.sample_workflow"
     assert {tool["functionContext"] for tool in ai_definition["toolFunctions"]} == {
         f"{namespace}.sample_workflow"
     }
+    tool_prefix = namespace.replace(".", "_")
+    assert f"`{slug_of(namespace)}-weather-tools`" in ai
+    assert f'"name":"{tool_prefix}_sample_workflow_searchLocations"' in ai
+    for name in files[:7]:
+        content = (tmp_path / name).read_text()
+        assert not re.search(r"example-weather-tools|example_sample_workflow_", content)
+    server = json.loads((tmp_path / files[-1]).read_text())
+    slug = namespace.replace(".", "-").replace("_", "-")
+    assert server["name"] == f"{slug}-weather-tools"
+    assert server["toolFunctions"] == ai_definition["toolFunctions"]
+
+
+def slug_of(namespace):
+    return namespace.replace(".", "-").replace("_", "-")
 
 
 def test_env_example_namespace_and_webhook_slug_are_personalized(tmp_path):

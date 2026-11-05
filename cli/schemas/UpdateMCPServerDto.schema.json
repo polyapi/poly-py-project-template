@@ -10,11 +10,17 @@
             "type": "string"
           },
           "oauthClientId": {
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "nullable": true
           },
           "oauthClientSecretVariableId": {
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "nullable": true
           },
           "oauthRedirectUris": {
