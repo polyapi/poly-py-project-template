@@ -9721,7 +9721,14 @@ def matching_remote(
 def project_remote(local: Any, remote: Any) -> Any:
     if isinstance(local, dict) and isinstance(remote, dict):
         return {
-            key: project_remote(value, remote.get(key)) for key, value in local.items()
+            # A hardcoded binding's value is the user's own data, compared whole:
+            # projecting it would hide properties removed from a JSON value.
+            key: (
+                remote.get(key)
+                if key == "value" and local.get("source") == "hardcoded"
+                else project_remote(value, remote.get(key))
+            )
+            for key, value in local.items()
         }
     if isinstance(local, list) and isinstance(remote, list):
         # Keep length changes visible; removing a tool or UI row must cause an update.
@@ -9985,28 +9992,60 @@ def mcp_variable_references(data: dict[str, Any]) -> list[dict[str, Any]]:
 def mcp_tool_reference(
     tool: dict[str, Any],
     functions: list[dict[str, Any]],
+    shared_functions: list[dict[str, Any]],
     client_functions: list[dict[str, Any]],
 ) -> str:
-    """Resolve a tool to an API or server function ID.
+    """Resolve a tool to an API or server function in the target environment.
 
-    The MCP endpoint runs tools on PolyAPI, so it leaves out client functions,
-    which run in the caller's process. A tool that names only a client function
-    fails here instead of deploying a server whose tool silently disappears.
+    The MCP endpoint runs tools there, so it leaves out client functions, which
+    run in the caller's process, and functions shared from other environments or
+    tenants. Referencing one fails here, with the reason, rather than deploying
+    a server whose tool silently disappears.
     """
     context, name = tool.get("functionContext"), tool.get("functionName")
+    if (
+        not isinstance(context, str)
+        or not isinstance(name, str)
+        or not context
+        or not name
+    ):
+        raise DeployError("Portable references require an exact context and name")
+    label = f"{context}.{name}"
 
-    def named(records: list[dict[str, Any]]) -> bool:
-        return any(
-            (item.get("context"), item.get("name")) == (context, name)
+    def named(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [
+            item
             for item in records
-        )
+            if (item.get("context"), item.get("name")) == (context, name)
+        ]
 
-    if not named(functions) and named(client_functions):
+    usable = {
+        item["id"]
+        for item in named(functions)
+        if isinstance(item.get("id"), str) and item["id"]
+    }
+    if len(usable) == 1:
+        return usable.pop()
+    if usable:
         raise DeployError(
-            f"Tool function {context}.{name} is a client function, which MCP "
-            "servers cannot call; expose an API or server function instead"
+            f"Tool function {label} is ambiguous across API and server functions "
+            "in this environment"
         )
-    return exact_reference(functions, context, name)
+    if named(shared_functions):
+        raise DeployError(
+            f"Tool function {label} is shared from another environment or tenant; "
+            "MCP servers can only call API or server functions in their own "
+            "environment"
+        )
+    if named(client_functions):
+        raise DeployError(
+            f"Tool function {label} is a client function, which MCP servers cannot "
+            "call; use an API or server function in this environment"
+        )
+    raise DeployError(
+        f"Tool function {label} was not found among API or server functions in "
+        "this environment"
+    )
 
 
 def resolve_mcp_payload(
@@ -10014,12 +10053,13 @@ def resolve_mcp_payload(
     functions: list[dict[str, Any]],
     variables: list[dict[str, Any]],
     config: DeployConfig,
+    shared_functions: list[dict[str, Any]] | None = None,
     client_functions: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Replace portable MCP tool and OAuth-secret references with API IDs.
 
-    ``functions`` holds API and server functions; ``client_functions`` only
-    turns a reference to a client function into a clear error.
+    ``functions`` holds the target environment's API and server functions. The
+    shared and client lists only turn a rejected reference into a clear error.
     """
     unsupported = sorted(set(data) - MCP_SERVER_FIELDS)
     if unsupported:
@@ -10057,7 +10097,9 @@ def resolve_mcp_payload(
                     "and argumentConfig"
                 )
             resolved: dict[str, Any] = {
-                "id": mcp_tool_reference(tool, functions, client_functions or [])
+                "id": mcp_tool_reference(
+                    tool, functions, shared_functions or [], client_functions or []
+                )
             }
             if "argumentConfig" in tool:
                 if not isinstance(tool["argumentConfig"], list):
@@ -10142,11 +10184,17 @@ def sync_mcp_servers(
         or item["environmentId"] == environment_id
     ]
     functions: list[dict[str, Any]] = []
+    shared_functions: list[dict[str, Any]] = []
     client_functions: list[dict[str, Any]] = []
     if any(item.data.get("toolFunctions") for item in files):
-        # MCP tools run on PolyAPI: only API and server functions qualify.
-        # Client functions are read only to explain a rejected reference.
-        functions = referenceable_functions(client, ("api", "server"))
+        # MCP tools run in the target environment: only its own API and server
+        # functions qualify. The others are read to explain a rejection.
+        for kind in ("api", "server"):
+            functions.extend(list_resources(client, f"/functions/{kind}"))
+            for scope in ("tenant", "public"):
+                shared_functions.extend(
+                    list_optional_scope_resources(client, f"/functions/{kind}/{scope}")
+                )
         client_functions = referenceable_functions(client, ("client",))
     variables = list_resources(client, "/variables")
     include_planned_references(
@@ -10160,7 +10208,7 @@ def sync_mcp_servers(
     plans = []
     for item in files:
         payload = resolve_mcp_payload(
-            item.data, functions, variables, config, client_functions
+            item.data, functions, variables, config, shared_functions, client_functions
         )
         name = payload["name"]
         if payload.get("isPublic") is True:

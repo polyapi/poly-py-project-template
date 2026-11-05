@@ -462,3 +462,159 @@ still have weather resources under `example.sample_ai_fx`. Train the tools and
 deploy the AI function in `example.sample_workflow`, regenerate the SDK, and
 verify that invocation before separately reviewing cleanup of the former
 context. This source change does not delete remote resources.
+
+## Weather MCP server
+
+Offer the same two weather tools to MCP clients, such as Claude, an IDE agent, or
+the MCP Inspector. In the Weather AI lesson a PolyAPI-hosted model calls the
+tools; here a model you do not control decides when to call them, and PolyAPI
+runs each call with the bindings you fixed. No AI provider setup is needed.
+
+### What this lesson covers
+
+| Part of the lesson | Purpose | Source |
+| --- | --- | --- |
+| MCP server | Choose the tools, leave only the place and coordinates to the client, and fix hosts and units | [weather_tools](artefacts/mcp-servers/weather_tools.json) |
+| Weather tools | The trained API Functions the Weather AI lesson also uses | [Geocoding spec](artefacts/specs/weather/geocoding_api.json), [weather spec](artefacts/specs/weather/weather_api.json) |
+| Contract tests | Pin the exposed tools, their bindings, and private visibility | [Local tests](tests/test_weather_tools_contract.py) |
+
+### Deploy and call the server
+
+#### 1. Check the contract and train the tools
+
+Select your Flow file as in [Weather AI step 1](#1-confirm-the-prerequisites),
+then run the offline checks:
+
+```bash
+export ENVPATH=workflows/dev.env
+uv run --locked pytest workflows/src/sample_workflow/tests/test_weather_tools_contract.py
+```
+
+If you completed [Weather AI step 2](#2-train-the-weather-tools), the tools are
+already trained. Otherwise, train them in the same environment:
+
+```bash
+uv run --locked python -m cli.operations train-openapi workflows/src/sample_workflow/artefacts/specs/weather --context example.sample_workflow --disable-ai
+```
+
+**Checkpoint:** the contract tests pass, and training lists `searchLocations`
+and `getCurrentWeather` under `example.sample_workflow`.
+
+#### 2. Deploy the server
+
+If `POLY_DEPLOY_SKIP_PATHS` excludes `workflows/src/sample_workflow`, remove that
+exclusion first; see [skipping samples](../../../docs/SETUP.md#skip-sample-deployments).
+
+```bash
+uv run --locked python cli/flow.py push --paths sample_workflow --types mcp-servers --dry-run
+uv run --locked python cli/flow.py push --paths sample_workflow --types mcp-servers
+```
+
+The preview should show `Would apply POST /mcp-servers` for
+`example-weather-tools`. MCP servers have no namespace context, so Flow finds
+them by name, which must be unique in the environment; kickstart names the
+server after your namespace. If the preview shows a `PATCH` although you never
+deployed it, another project uses that name: stop and choose a different name
+before pushing.
+
+**Checkpoint:** the push prints
+`MCP URL for example-weather-tools: https://<instance>/mcp-servers/<id>/mcp`.
+Copy that URL.
+
+#### 3. Connect a client
+
+The server is private. PolyAPI rejects anonymous calls and PolyAPI keys for
+private servers and accepts only OAuth sign-ins, which need an OAuth client this
+lesson does not configure. To try the server, make it public briefly: while it
+is public, anyone with its URL can call the two tools. They only read public
+Open-Meteo data, and step 5 makes the server private again.
+
+Set `"isPublic": true` in [weather_tools.json](artefacts/mcp-servers/weather_tools.json),
+then push:
+
+```bash
+uv run --locked python cli/flow.py push --paths sample_workflow --types mcp-servers
+```
+
+Flow warns that the server is public, and the `PATCH` changes only `isPublic`.
+The contract tests fail while it is public; that is their job.
+
+Connect with curl, kickstart's one prerequisite. Replace the URL with yours:
+
+```bash
+MCP_URL='https://<instance>/mcp-servers/<id>/mcp'
+mcp() { curl -s "$MCP_URL" -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -d "$1"; echo; }
+mcp '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"tutorial","version":"1.0.0"}}}'
+mcp '{"jsonrpc":"2.0","method":"notifications/initialized"}'
+mcp '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
+```
+
+If Node.js is installed, the [MCP Inspector](https://modelcontextprotocol.io/docs/tools/inspector)
+offers the same calls in a browser: run `npx @modelcontextprotocol/inspector`,
+choose the **Streamable HTTP** transport, paste the MCP URL, select **Connect**,
+then **List Tools** under **Tools**.
+
+**Checkpoint:** two tools appear: `example_sample_workflow_searchLocations`, with
+the input `name`, and `example_sample_workflow_getCurrentWeather`, with
+`latitude` and `longitude`. The fixed hosts, result count, and units do not
+appear as inputs: PolyAPI applies them.
+
+#### 4. Call a sample tool
+
+Search for a place, then pass one result's latitude and longitude to the weather
+tool:
+
+```bash
+mcp '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"example_sample_workflow_searchLocations","arguments":{"name":"Bratislava"}}}'
+mcp '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"example_sample_workflow_getCurrentWeather","arguments":{"latitude":48.14816,"longitude":17.10674}}}'
+```
+
+**Checkpoint:** the location search returns at most three matches, because the
+server fixes `count` at 3, each with coordinates, such as Bratislava, Slovakia,
+at about 48.15, 17.11. The weather call returns current conditions for them.
+
+#### 5. Make the server private again
+
+Set `"isPublic": false`, confirm the contract, and push:
+
+```bash
+uv run --locked pytest workflows/src/sample_workflow/tests/test_weather_tools_contract.py
+uv run --locked python cli/flow.py push --paths sample_workflow --types mcp-servers
+```
+
+**Checkpoint:** the same curl calls now return `403` with
+`MCP server is private`.
+
+### How the MCP server works
+
+- The client's model chooses which tool to call and when. It sees each tool's
+  name, which joins the context and function name with underscores and so shows
+  your namespace, and the description trained from the spec. Improve a
+  description in the spec before exposing a tool.
+- Only `ai` arguments become tool inputs. PolyAPI applies `hardcoded` values
+  without showing them, so the client cannot change the provider host or units.
+- `toolFunctions` is the complete tool list: removing an entry removes the tool
+  on the next push.
+- Sharing a private server needs OAuth: set `oauthClientId` and
+  `oauthClientSecretVariable` as described in
+  [Flow's MCP reference](../../../cli/README.md#mcp-servers).
+- Flow never deletes MCP servers. Delete `example-weather-tools` in PolyAPI when
+  you no longer need it.
+
+### Explore the MCP server
+
+- Remove `getCurrentWeather` from `toolFunctions`, push while the server is
+  public, and list the tools again: only the location search remains. The
+  contract tests fail, flagging the narrowed tool surface in review. Restore
+  the tool afterwards.
+- Change the fixed `count` from 3 to 1, push, and repeat the location search.
+
+### MCP troubleshooting
+
+| Symptom | Check |
+| --- | --- |
+| `403` with `MCP server is private` | The server is private; follow step 3 to try it from a client. |
+| `401` with `Invalid OIDC access token` | A PolyAPI key was sent as a bearer token; private servers accept only OAuth sign-ins. |
+| Push stops: tool not found among API or server functions in this environment | Train the weather tools in the same environment, as in step 1. |
+| Preview shows a `PATCH` for a server you never deployed | Another project uses the name; rename the server before pushing. |
+| Server still listed after you delete the artefact | Flow never deletes MCP servers; delete it in PolyAPI. |

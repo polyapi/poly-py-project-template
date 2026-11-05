@@ -281,6 +281,47 @@ def test_schema_quirks_match_ts_contract():
     ).is_valid({})
 
 
+def test_mcp_server_schemas_are_refreshed_with_any_hardcoded_value():
+    spec = platform_spec()
+    schemas = spec["components"]["schemas"]
+    schemas["MCPToolFunctionArgumentConfigDto"] = {
+        "type": "object",
+        "properties": {
+            "key": {"type": "string"},
+            "source": {"type": "string"},
+            "value": {"type": "object"},
+        },
+    }
+    for name in ("CreateMCPServerDto", "UpdateMCPServerDto"):
+        schemas[name]["properties"]["argument"] = {
+            "$ref": "#/components/schemas/MCPToolFunctionArgumentConfigDto"
+        }
+    result = refresh.endpoint_schemas(spec)
+    for name in ("CreateMCPServerDto", "UpdateMCPServerDto"):
+        validator = Draft7Validator(result[f"{name}.schema.json"])
+        for value in ("https://api.open-meteo.com", 3, True, {"units": "metric"}):
+            argument = {"key": "host", "source": "hardcoded", "value": value}
+            assert validator.is_valid({"name": "tools", "argument": argument})
+        # AI function corrections do not leak into MCP validators.
+        properties = result[f"{name}.schema.json"]["components"]["schemas"][name][
+            "properties"
+        ]
+        assert "apiType" not in properties
+
+
+def test_missing_mcp_endpoints_retain_existing_schemas(tmp_path):
+    spec = copy.deepcopy(platform_spec())
+    spec["paths"].pop("/mcp-servers")
+    spec["paths"].pop("/mcp-servers/{id}")
+    source = tmp_path / "platform.json"
+    source.write_text(json.dumps(spec))
+    existing = tmp_path / "cli/schemas/CreateMCPServerDto.schema.json"
+    existing.parent.mkdir(parents=True)
+    existing.write_text("existing validator")
+    refresh.refresh(tmp_path, str(source))
+    assert existing.read_text() == "existing validator"
+
+
 def test_local_design_schemas_and_ambiguous_source(tmp_path):
     source = tmp_path / "platform.json"
     source.write_text(json.dumps(platform_spec()))

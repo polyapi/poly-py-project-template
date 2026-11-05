@@ -538,6 +538,10 @@ references. Create/update payloads are checked against the JSON schemas in
 automatically. Omitted fields are preserved; explicit empty arrays remove
 tools or arguments.
 
+When comparing AI function and MCP server tools, Flow ignores fields the
+platform adds, but compares each `hardcoded` value whole: removing a property
+from a JSON value, or an entry from an array, updates the deployed binding.
+
 ## MCP servers
 
 An MCP server exposes selected PolyAPI functions as tools to MCP clients such as
@@ -568,11 +572,12 @@ coding agents and chat assistants. Keep each server in
 ```
 
 Tool references use `functionName` and `functionContext` and resolve against
-accessible API and server functions. Client functions run in the caller's
-process, so the MCP endpoint cannot offer them; Flow rejects a tool that
-resolves only to a client function before any write. Each `argumentConfig`
-entry uses the AI function sources: `ai` (the MCP client supplies it),
-`hardcoded`, `argument`, or a namespace-owned `variable`.
+API and server functions in the target environment, the only tools the MCP
+endpoint can call. Client functions run in the caller's process, and functions
+shared from other environments or tenants are out of the endpoint's reach;
+Flow rejects either kind, with the reason, before any write. Each
+`argumentConfig` entry uses the AI function sources: `ai` (the MCP client
+supplies it), `hardcoded`, `argument`, or a namespace-owned `variable`.
 For OAuth, set `oauthClientId`, `oauthRedirectUris`, and
 `oauthClientSecretVariable` with `variableName` and `variableContext`; use
 `null` to clear the client ID or secret. Remote IDs such as `toolFunctionIds`,
@@ -812,7 +817,8 @@ Downloads carry no API credentials and do not follow redirects.
 
 Refresh rebuilds endpoint JSON validators under `cli/schemas/`, including local
 component references and the known platform schema corrections. All contracts
-are resolved and checked before files are replaced. Missing optional AI endpoints
+are resolved and checked before files are replaced. This includes the MCP server
+create and update contracts. Missing optional AI function or MCP server endpoints
 retain their existing validators. Review the resulting changes before committing.
 
 `POLYAPI_DESIGNS_DIR` or `--designs-dir` selects a directory containing one local
