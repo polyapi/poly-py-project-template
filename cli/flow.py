@@ -898,6 +898,8 @@ ROOT_HELP_EPILOG = textwrap.dedent("""
       python cli/flow.py train-model --help
       python cli/flow.py delete-content --help
       python cli/flow.py self-update --check
+      python cli/flow.py skills add python
+      python cli/flow.py skills update
 
     Notes:
       - Functions are discovered from inline polyConfig in Python source; no peer JSON is required.
@@ -1673,6 +1675,9 @@ def create_parser() -> argparse.ArgumentParser:
     )
     subparsers.add_parser(
         "self-update", help="Preview, update, or restore this project's Flow CLI."
+    )
+    subparsers.add_parser(
+        "skills", help="Install and update agent skills from poly-skills."
     )
     push_parser = subparsers.add_parser(
         "push",
@@ -10569,6 +10574,14 @@ def main() -> int:
         from cli.setup import main as setup_main
 
         return setup_main(sys.argv[2:])
+    if sys.argv[1:2] == ["skills"]:
+        # Skills are project files: no environment file or PolyAPI connection.
+        from cli.skills import SkillsError, main as skills_main
+
+        try:
+            return skills_main(sys.argv[2:])
+        except SkillsError as error:
+            raise DeployError(str(error)) from None
     cli_args = parse_args()
     if cli_args is None:
         return 0

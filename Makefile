@@ -1,4 +1,4 @@
-.PHONY: install check format test test-integration push dry-run train-openapi delete-content logs build-schema
+.PHONY: install check format test test-integration push dry-run train-openapi delete-content logs build-schema skills
 
 install:
 	uv sync --locked
@@ -34,6 +34,9 @@ logs:
 
 build-schema:
 	uv run --locked python -m cli.schema_refresh $(ARGS)
+
+skills:
+	uv run --locked python cli/flow.py skills $(ARGS)
 
 .PHONY: push-dynamic dry-run-dynamic
 

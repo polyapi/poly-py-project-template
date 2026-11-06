@@ -128,6 +128,74 @@ project currently requires the same Flow entrypoint, locked uv project,
 `.venv`, env example, and ignore rules; it is not a globally installed package
 or GitHub app. It adds no runtime dependency.
 
+## Agent skills
+
+Install and refresh the [poly-skills](https://github.com/polyapi/poly-skills)
+guidance that coding agents load from `.agents/skills/`:
+
+```bash
+flow skills add
+flow skills add python
+flow skills update
+flow skills update --dry-run
+```
+
+Without the shell helper, run the same commands with
+`uv run --locked python cli/flow.py skills ...` or `make skills ARGS="update"`.
+The shell helper requires `flow setup` first, like its other commands; the
+direct forms do not.
+
+Without a setup name, `add` asks what the skills are needed for. Each setup
+installs every skill in its poly-skills packs:
+
+| Setup | Prompt answer | Packs |
+| --- | --- | --- |
+| `python` | Coding in Python (default here) | `general`, `polyapi-common`, `polyapi-python` |
+| `typescript` | Coding in TypeScript | `general`, `polyapi-common`, `polyapi-typescript` |
+
+Each skill folder is copied to `.agents/skills/<skill>/` under its own name.
+The Python and TypeScript packs use the same skill names, so Flow refuses to
+combine those two setups in one project. Flow records the selected setups, the
+poly-skills commit, and a content digest for each installed skill in
+`.agents/flow-skills.json`. Commit that file with `.agents/skills/` so
+collaborators share the same skills. The TypeScript Flow CLI uses the same
+setups and record format.
+
+`update` refreshes the recorded setups from poly-skills `main` and installs
+skills that have since been added to their packs. It compares each folder with
+the digest recorded when Flow installed it:
+
+- Unmodified folders are refreshed.
+- Folders with local edits are kept while poly-skills has no newer version.
+- A folder with local edits that poly-skills has since changed, or a same-named
+  folder that Flow did not install, is marked `!`. Flow asks before replacing
+  it; answering no keeps it and updates the rest. Without an interactive
+  terminal, such folders are kept unless `--yes` is supplied.
+- Skills that are no longer part of a setup are reported and left in place.
+- Skill folders with other names, such as your own skills, are not changed.
+
+To reinstall a skill, delete its folder and run `update`. CRLF line endings and
+file browser metadata such as `.DS_Store` do not count as local edits.
+`--dry-run` prints the plan without changing files.
+
+Kickstart runs `flow skills add python --yes` on the poly-skills archive it
+has already downloaded and checked, which replaces the template's bundled skill
+copies with the poly-skills versions. In an existing checkout,
+`flow skills add python` marks the bundled copies `!` because they are reviewed
+template copies that Flow did not install; keep or replace each set as needed.
+
+Skills are downloaded over HTTPS as the public poly-skills archive, so Flow
+needs neither Git nor GitHub sign-in. `--ref` selects a branch, tag, or commit.
+`--source` selects another public GitHub repository
+(`https://github.com/owner/repository`), a private one through Git over SSH
+(`git@github.com:owner/repository.git`), a local Git checkout (committed files
+only), or a `.tar.gz` archive downloaded from GitHub. Both options apply to
+that run only; the lock records a source only when it is another GitHub
+repository. Links, protected
+files such as `.env` files or keys, and unsupported entries stop the command
+before files change. Skills commands use no environment file, PolyAPI
+connection, or target verification.
+
 ## Dependency-aware deployments
 
 Use `push-dynamic` when updating shared client functions. It uses Python's AST
