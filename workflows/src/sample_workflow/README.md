@@ -1,8 +1,8 @@
 # Build your first PolyAPI workflow in Python
 
 Build a protected endpoint that greets someone with advice or a joke. This lesson
-introduces webhooks, triggers, server and client functions, trained API Functions,
-and Vari. After your first request works, explore validation, errors, and the
+introduces webhooks bound to server functions, server and client functions,
+trained API Functions, and Vari. After your first request works, explore validation, errors, and the
 optional scheduled job.
 
 New to the template? Complete [Getting started](../../../README.md#getting-started)
@@ -35,8 +35,8 @@ workflows/src/sample_workflow/
     specs/motd/             Joke and advice API descriptions
     specs/weather/          Geocoding and weather API descriptions
     vari/                   Configuration declarations, not real secrets
-    webhooks/               Endpoint, inline payload schema, and security
-    triggers/               Event-to-function connections
+    webhooks/               Endpoint, inline payload schema, security, and bound function
+    triggers/               Platform-error trigger for the error handler
     jobs/                   Disabled scheduled invocation
     ai-functions/           Optional weather AI definition
   tests/                    Offline tests and opt-in live tests
@@ -55,7 +55,7 @@ Your first request follows the advice path:
 flowchart TD
     R[Send a name and wise mood] --> V{Webhook security accepts request}
     V -->|no| X[Reject before workflow runs]
-    V -->|yes| T[Trigger calls server and waits]
+    V -->|yes| T[Webhook runs its bound server function]
     T --> S[Server coordinates and client selects advice]
     S --> A[Trained API gets advice from provider]
     A --> G[Server adds the name and returns the greeting]
@@ -83,7 +83,7 @@ is separate from the [Weather AI lesson](OVERVIEW.md#weather-ai).
 | Building block | Why it exists in this sample | Read the implementation |
 | --- | --- | --- |
 | Webhook and security function | Accept authenticated HTTP requests and reject invalid input | [Webhook](artefacts/webhooks/motd_hook.json), [validator](server/validate_motd_payload_sfx.py) |
-| Trigger | Route the webhook to a function and wait for its result | [Webhook trigger](artefacts/triggers/motd_trigger.json) |
+| Webhook binding | Run one server function directly and return its response | [`serverFunction` in the webhook](artefacts/webhooks/motd_hook.json) |
 | [Server function](https://docs.polyapi.io/functions/server_functions.html) | Coordinate the request, validate direct calls, and choose the response | [motd_server](server/motd_server_sfx.py) |
 | [Client function](https://docs.polyapi.io/generated_sdks/client_functions.html) | Select an API by mood and check its result | [motd_client](client/motd_client_cfx.py) |
 | API Functions | Make the outbound joke/advice HTTP calls through PolyAPI | [Joke spec](artefacts/specs/motd/joke_api.json), [advice spec](artefacts/specs/motd/advice_api.json) |
@@ -220,8 +220,8 @@ uv run --locked python cli/flow.py push-dynamic --paths sample_workflow --types 
 ```
 
 **Check the preview:** confirm the intended environment and namespace. The plan
-should include the sample's two variables, four functions, webhook, two
-triggers, and disabled job. `push-dynamic` also rebuilds local server functions
+should include the sample's two variables, four functions, webhook bound to
+`motd_server`, error trigger, and disabled job. `push-dynamic` also rebuilds local server functions
 that use a changed client function, so check any additional planned changes.
 
 **In your terminal**, deploy the workflow once the plan is correct:
@@ -281,7 +281,7 @@ Expect HTTP 200 and a body with this shape; the advice text varies:
 
 **Checkpoint:** the message starts with `Hi Ada!` and includes advice. Provider
 text changes between calls. You have exercised webhook → security function →
-trigger → server → client → trained API Function. Find `motd_server` in Canopy to
+bound server function → client → trained API Function. Find `motd_server` in Canopy to
 inspect its logs; `motd_client` runs inside that server function and has no
 separate log stream. The advice configuration ships with its public host URL,
 so this path needs no extra provider account or secret.

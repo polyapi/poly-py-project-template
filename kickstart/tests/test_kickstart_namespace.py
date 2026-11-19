@@ -158,6 +158,45 @@ def test_real_sample_guides_and_artefacts_stay_aligned(tmp_path, namespace):
     assert server["toolFunctions"] == ai_definition["toolFunctions"]
 
 
+@pytest.mark.parametrize("namespace", ["my_project", "acme.integrations"])
+def test_webhook_server_function_binding_follows_the_namespace(tmp_path, namespace):
+    hook = "workflows/src/sample_workflow/artefacts/webhooks/motd_hook.json"
+    original = json.loads((ROOT / hook).read_text())
+    if original["context"] != "example.sample_workflow":
+        pytest.skip("Template-only check; this project's namespace is already set.")
+    assert original["serverFunction"]["functionContext"] == "example.sample_workflow"
+    target = tmp_path / hook
+    target.parent.mkdir(parents=True)
+    target.write_text((ROOT / hook).read_text())
+    shared = tmp_path / "workflows/src/demo/artefacts/webhooks/shared_hook.json"
+    shared.parent.mkdir(parents=True)
+    shared.write_text(
+        json.dumps(
+            {
+                "name": "shared",
+                "context": "example.demo",
+                "serverFunction": {
+                    "functionContext": "partner.tools",
+                    "functionName": "run",
+                },
+            }
+        )
+    )
+    rewrite_namespace(tmp_path, namespace)
+    webhook = json.loads(target.read_text())
+    assert webhook["context"] == f"{namespace}.sample_workflow"
+    assert webhook["serverFunction"] == {
+        "functionName": "motd_server",
+        "functionContext": f"{namespace}.sample_workflow",
+    }
+    assert webhook["securityFunctions"][0]["id"] == (
+        f"{{{{{namespace}.sample_workflow.validate_motd_payload}}}}"
+    )
+    assert webhook["slug"] == f"{slug_of(namespace)}-motd"
+    external = json.loads(shared.read_text())["serverFunction"]
+    assert external["functionContext"] == "partner.tools"
+
+
 def slug_of(namespace):
     return namespace.replace(".", "-").replace("_", "-")
 
