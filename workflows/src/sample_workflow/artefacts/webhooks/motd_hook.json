@@ -7,6 +7,7 @@
   "subpath": "motd",
   "slug": "example-motd",
   "requirePolyApiKey": true,
+  "serverFunction": {"functionName": "motd_server", "functionContext": "example.sample_workflow"},
   "eventPayloadTypeSchema": {
     "type": "object",
     "required": ["name", "mood"],

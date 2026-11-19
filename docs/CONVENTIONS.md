@@ -70,8 +70,13 @@ inline; neighboring modules are not packaged with it. Use the native Python SDK
 for shared deployed functions rather than importing another deployable file.
 
 A client function executes in its caller's process. A server function executes
-on PolyAPI and can be a webhook or job destination. Webhook and job handlers
-accept three arguments: the event body, headers, and parameters. Error-handler
+on PolyAPI and can be a webhook or job destination. Connect a webhook to the one
+server function that handles it with the webhook's `serverFunction` binding,
+not a trigger: the binding runs the function and returns its response, and it
+replaces the webhook's triggers. Flow rejects a local trigger sourced from a
+bound webhook. Use a trigger only for fire-and-forget delivery
+(`waitForResponse: false`) or fan-out to several functions. Webhook and job
+handlers accept three arguments: the event body, headers, and parameters. Error-handler
 triggers supply one error object instead; do not reuse those signatures blindly.
 
 - Call deployed dependencies through `polyapi.poly`, not local imports.

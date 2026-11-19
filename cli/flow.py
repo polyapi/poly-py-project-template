@@ -7073,15 +7073,9 @@ def sync_webhooks(
 
     logger.muted(f"Found {len(files)} local webhook file(s)")
     logger.action("Syncing webhooks...")
-    trigger_routes = (
-        webhook_trigger_double_execution_routes(config, cli_args)
-        if any("serverFunction" in item.data for item in files)
-        else set()
-    )
     for item in files:
         try:
             payload = build_webhook_payload(item.path, item.data, function_registry)
-            warn_webhook_trigger_double_execution(item.data, trigger_routes, logger)
             context = payload["context"]
             name = payload["name"]
             resume_key = f"webhook:{context}:{name}"
@@ -7330,49 +7324,91 @@ def resolve_webhook_server_function(
     )
 
 
-def webhook_trigger_double_execution_routes(
+def find_webhook_binding_trigger_conflicts(
     config: DeployConfig, cli_args: CliArgs
-) -> set[tuple[str, str, str, str]]:
-    """Return (webhook context, name, function context, name) routed by triggers."""
-    routes: set[tuple[str, str, str, str]] = set()
-    for item in load_artifact_files(config, cli_args, config.trigger_globs):
-        data = item.data if isinstance(item.data, dict) else {}
-        source = data.get("source")
-        destination = data.get("destination")
-        if not isinstance(source, dict) or not isinstance(destination, dict):
+) -> list[tuple[str, str, Path, list[Path]]]:
+    """Return local webhooks bound to a server function that also have triggers.
+
+    A bound webhook runs its server function in its own environment and skips
+    that webhook's triggers, so a local trigger sourced from it would never run.
+    Every local webhook and trigger is considered, whatever the type and path
+    selection, but a conflict is reported only when the push selects its
+    webhook or one of its triggers.
+    """
+    if not {"webhooks", "triggers"} & set(config.enabled_types):
+        return []
+    excluded = config.orphan_excluded_contexts
+
+    def local_documents(patterns: tuple[str, ...]) -> list[tuple[Path, Any]]:
+        documents = []
+        for path in discover_paths(
+            config.repo_root, patterns, config.skip_paths, config.priority_paths
+        ):
+            if path in cli_args.invalid_paths:
+                continue
+            try:
+                documents.append((path, load_json_document(path)))
+            except (DeployError, ValueError, OSError):
+                # Selected malformed files already failed per-file validation.
+                continue
+        return documents
+
+    def selected(kind: str, path: Path) -> bool:
+        return kind in config.enabled_types and matches_path_filters(
+            [path], cli_args.path_filters, config.repo_root
+        )
+
+    bound: dict[tuple[str, str], Path] = {}
+    for path, data in local_documents(config.webhook_globs):
+        if not isinstance(data, dict) or data.get("serverFunction") is None:
             continue
-        route = (
-            source.get("webhookContext"),
-            source.get("webhookName"),
-            destination.get("functionContext"),
-            destination.get("functionName"),
-        )
-        if all(isinstance(part, str) for part in route):
-            routes.add(route)
-    return routes
+        identity = (data.get("context"), data.get("name"))
+        if all(isinstance(part, str) for part in identity) and not (
+            context_is_orphan_excluded(identity[0], excluded)
+        ):
+            bound.setdefault(identity, path)
+
+    triggers: dict[tuple[str, str], list[Path]] = {}
+    for path, data in local_documents(config.trigger_globs):
+        source = data.get("source") if isinstance(data, dict) else None
+        if not isinstance(source, dict):
+            continue
+        identity = (source.get("webhookContext"), source.get("webhookName"))
+        if identity in bound:
+            triggers.setdefault(identity, []).append(path)
+
+    return [
+        (context, name, bound[(context, name)], paths)
+        for (context, name), paths in sorted(triggers.items())
+        if selected("webhooks", bound[(context, name)])
+        or any(selected("triggers", path) for path in paths)
+    ]
 
 
-def warn_webhook_trigger_double_execution(
-    data: dict[str, Any],
-    routes: set[tuple[str, str, str, str]],
-    logger: Logger,
+def validate_webhook_binding_trigger_conflicts(
+    config: DeployConfig, cli_args: CliArgs
 ) -> None:
-    reference = data.get("serverFunction")
-    if not isinstance(reference, dict):
+    """Fail before transport when a bound webhook is also a trigger source."""
+    conflicts = find_webhook_binding_trigger_conflicts(config, cli_args)
+    if not conflicts:
         return
-    route = (
-        data.get("context"),
-        data.get("name"),
-        reference.get("functionContext"),
-        reference.get("functionName"),
-    )
-    if route in routes:
-        logger.warn(
-            f"Webhook {route[0]}.{route[1]} connects directly to server function "
-            f"{route[2]}.{route[3]}, and a trigger also routes it there: each "
-            "event would run the function twice. Remove the trigger or the "
-            "serverFunction connection."
+    lines = []
+    for context, name, webhook_path, trigger_paths in conflicts:
+        trigger_list = ", ".join(
+            relative_label(path, config.repo_root) for path in trigger_paths
         )
+        lines.append(
+            f"Webhook {context}.{name} "
+            f"({relative_label(webhook_path, config.repo_root)}) is bound to a "
+            f"server function and is also the source of trigger(s): {trigger_list}."
+        )
+    raise DeployError(
+        "\n".join(lines)
+        + "\nA webhook's serverFunction binding replaces its triggers: calls in "
+        "the webhook's environment run the bound function and skip the "
+        "webhook's triggers. Remove the trigger artefact(s), or remove the "
+        "webhook's serverFunction binding."
+    )
 
 
 def normalize_webhook_route_component(value: Any) -> str:
@@ -9993,7 +10029,9 @@ def validate_local_artifacts(
                     ) from None
                 logger.warn(message + "; skipped")
                 invalid.add(path)
-    return replace(cli_args, invalid_paths=tuple(sorted(invalid)))
+    checked = replace(cli_args, invalid_paths=tuple(sorted(invalid)))
+    validate_webhook_binding_trigger_conflicts(config, checked)
+    return checked
 
 
 def validate_local_namespace(

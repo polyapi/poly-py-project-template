@@ -1,3 +1,4 @@
+import ast
 import importlib.util
 import json
 from pathlib import Path
@@ -226,3 +227,28 @@ def test_valid_request_passes_security_function(sdk):
     assert load_source("server/validate_motd_payload_sfx.py").validate_motd_payload(
         {"name": "Reader", "mood": "funny"}, {}, {}
     )
+
+
+def test_webhook_is_bound_directly_to_the_server_function():
+    webhook = json.loads(
+        (WORKFLOW / "artefacts/webhooks/motd_hook.json").read_text(encoding="utf-8")
+    )
+    tree = ast.parse(
+        (WORKFLOW / "server/motd_server_sfx.py").read_text(encoding="utf-8")
+    )
+    config = next(
+        ast.literal_eval(node.value)
+        for node in tree.body
+        if isinstance(node, ast.AnnAssign) and node.target.id == "polyConfig"
+    )
+    assert webhook["serverFunction"] == {
+        "functionName": config["name"],
+        "functionContext": config["context"],
+    }
+    # A binding replaces the webhook's triggers, so none may use it as a source.
+    for trigger in (WORKFLOW / "artefacts/triggers").glob("*.json"):
+        source = json.loads(trigger.read_text(encoding="utf-8")).get("source", {})
+        assert (source.get("webhookContext"), source.get("webhookName")) != (
+            webhook["context"],
+            webhook["name"],
+        )

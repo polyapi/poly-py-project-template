@@ -1059,7 +1059,8 @@ def test_first_deployment_dry_run_resolves_local_functions_webhook_and_job(
     assert summary.functions.created == 4
     assert (
         summary.webhooks.created == 1
-        and summary.triggers.created == 2
+        # The webhook binds motd_server directly; only the error trigger remains.
+        and summary.triggers.created == 1
         and summary.jobs.created == 1
     )
     assert not flow.summary_has_incomplete_work(summary)
@@ -2004,38 +2005,95 @@ def test_webhook_server_function_change_reaches_update(settings):
     assert client.writes[0][2]["payload"]["serverFunctionId"] is None
 
 
-def test_webhook_and_trigger_to_the_same_function_warn_of_double_execution(
-    settings,
-):
-    reference = {"functionContext": "example.demo", "functionName": "handler"}
-    trigger = {
+HANDLER = {"functionContext": "example.demo", "functionName": "handler"}
+
+
+def hook_trigger(destination=HANDLER, **overrides):
+    return {
         "name": "example_hook",
         "source": {"webhookContext": "example.demo", "webhookName": "hook"},
-        "destination": reference,
+        "destination": destination,
+        **overrides,
     }
-    _, warnings, _ = sync_webhook(
-        settings,
-        webhook_data(serverFunction=reference),
-        triggers=[trigger],
-        dry_run=True,
-    )
-    assert any("twice" in str(call) for call in warnings.call_args_list)
 
 
-def test_webhook_and_trigger_to_different_functions_do_not_warn(settings):
-    trigger = {
-        "source": {"webhookContext": "example.demo", "webhookName": "hook"},
-        "destination": {"functionContext": "example.demo", "functionName": "other"},
-    }
-    _, warnings, _ = sync_webhook(
-        settings,
-        webhook_data(
-            serverFunction={
-                "functionContext": "example.demo",
-                "functionName": "handler",
-            }
+@pytest.mark.parametrize(
+    "trigger",
+    [
+        hook_trigger(),
+        hook_trigger(
+            {"functionContext": "example.demo", "functionName": "other"},
+            waitForResponse=False,
         ),
-        triggers=[trigger],
+    ],
+)
+@pytest.mark.parametrize("types", [None, ("webhooks",), ("triggers",)])
+def test_bound_webhook_with_local_trigger_fails_preflight(settings, trigger, types):
+    config, args, logger, _ = settings
+    artefact(config, "webhooks", webhook_data(serverFunction=HANDLER), name="hook")
+    artefact(config, "triggers", trigger, name="hook_trigger")
+    if types is not None:
+        config = replace(config, enabled_types=types)
+    with pytest.raises(flow.DeployError) as error:
+        flow.validate_local_artifacts(config, args, logger)
+    message = str(error.value)
+    assert "Webhook example.demo.hook" in message
+    assert "workflows/src/demo/artefacts/webhooks/hook.json" in message
+    assert "workflows/src/demo/artefacts/triggers/hook_trigger.json" in message
+    assert "replaces its triggers" in message
+    assert "Remove the trigger" in message and "serverFunction binding" in message
+
+
+def test_bound_webhook_conflict_is_not_skipped_by_skip_invalid(settings):
+    config, args, _, _ = settings
+    artefact(config, "webhooks", webhook_data(serverFunction=HANDLER), name="hook")
+    artefact(config, "triggers", hook_trigger(), name="hook_trigger")
+    with pytest.raises(flow.DeployError, match="replaces its triggers"):
+        flow.validate_local_artifacts(config, replace(args, skip_invalid=True), Mock())
+
+
+@pytest.mark.parametrize(
+    "webhook, trigger_source",
+    [
+        (webhook_data(serverFunction=None), "hook"),
+        (webhook_data(), "hook"),
+        (webhook_data(serverFunction=HANDLER), "another_hook"),
+    ],
+)
+def test_unbound_or_unrelated_webhooks_keep_their_triggers(
+    settings, webhook, trigger_source
+):
+    config, args, logger, _ = settings
+    artefact(config, "webhooks", webhook, name="hook")
+    trigger = hook_trigger()
+    trigger["source"]["webhookName"] = trigger_source
+    artefact(config, "triggers", trigger, name="hook_trigger")
+    assert flow.find_webhook_binding_trigger_conflicts(config, args) == []
+
+
+def test_binding_conflict_ignores_unrelated_selection(settings):
+    config, args, _, _ = settings
+    artefact(config, "webhooks", webhook_data(serverFunction=HANDLER), name="hook")
+    artefact(config, "triggers", hook_trigger(), name="hook_trigger")
+    assert not flow.find_webhook_binding_trigger_conflicts(
+        replace(config, enabled_types=("functions", "variables")), args
+    )
+    other = config.repo_root / "workflows/src/other"
+    other.mkdir(parents=True)
+    assert not flow.find_webhook_binding_trigger_conflicts(
+        config, replace(args, path_filters=(other,))
+    )
+    trigger_dir = config.repo_root / "workflows/src/demo/artefacts/triggers"
+    assert flow.find_webhook_binding_trigger_conflicts(
+        config, replace(args, path_filters=(trigger_dir,))
+    )
+
+
+def test_sync_webhooks_no_longer_warns_of_double_execution(settings):
+    _, warnings, _ = sync_webhook(
+        settings,
+        webhook_data(serverFunction=HANDLER),
+        triggers=[hook_trigger()],
         dry_run=True,
     )
     assert not any("twice" in str(call) for call in warnings.call_args_list)

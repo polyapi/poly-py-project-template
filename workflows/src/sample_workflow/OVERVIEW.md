@@ -14,7 +14,7 @@ working sample; they are not extra steps needed for your first request.
 flowchart TD
     W[Authenticated webhook] --> V[Security validation]
     V -->|invalid| R[Platform rejection]
-    V -->|valid| T[Synchronous trigger]
+    V -->|valid| T[Webhook runs bound server function]
     T --> S[Server validates input]
     J[Disabled scheduled job] --> S
     D[Direct SDK call] --> S
@@ -34,8 +34,15 @@ flowchart TD
     H --> L[Log bounded diagnostic]
 ```
 
+The webhook's `serverFunction` field binds it directly to `motd_server`; there is
+no webhook trigger. In the webhook's own environment, a bound webhook runs that
+function, returns the function's response, and skips any triggers sourced from
+the webhook, so Flow rejects a local trigger for a bound webhook. Listeners are
+still notified. Use a trigger instead only for fire-and-forget delivery
+(`waitForResponse: false`) or to fan one webhook out to several functions.
+
 The entrypoint accepts the event convention's three arguments: `event`, `headers`,
-and `params`. The webhook requires a PolyAPI key and declares a strict payload
+and `params`; a bound webhook passes the same arguments as a trigger. The webhook requires a PolyAPI key and declares a strict payload
 schema. Both the validator and server check the name and mood; the client also
 rejects an unsupported mood. API results must have a 2xx status and the expected
 nonempty fields: `setup` / `punchline` or `slip.advice`.

@@ -6,12 +6,15 @@ environment. GitHub CLI (`gh`) is not required.
 
 - [Upgrading with Flow itself](#upgrading-with-flow-itself)
 - [Reviewing customizations and recovering](#reviewing-customizations-and-recovering)
+- [Webhook bindings replace triggers](#webhook-bindings-replace-triggers)
 
 **Python Flow 1.2.0 adds self-update, 1.3.0 adds MCP server deployment, 1.4.0
 adds agent skills, and 1.5.0 adds PolyAPI Release 35 support.** Release 35
 features need a platform instance that runs Release 35; refresh validators with
 `make build-schema` after upgrading. Flow 1.5.0 also pins `polyapi-python==0.3.21`;
 review the dependency change and run `uv sync --locked` after the update.
+Flow 1.5.1 rejects a local trigger sourced from a webhook that has a
+`serverFunction` binding; see [webhook bindings](#webhook-bindings-replace-triggers).
 Flow's version is maintained in
 `cli/__init__.py`, separately from the workspace and PolyAPI SDK. Patch releases
 contain fixes, minor releases add compatible features, and major releases
@@ -107,3 +110,38 @@ and its saved `restore.py`, for use if Flow cannot start. Recovery needs Python
 3.11 or newer and works without the installed CLI or SDK dependencies. Keep
 backups out of Git and review and commit the source changes yourself; upgrading
 does not commit, push, or deploy anything.
+
+## Webhook bindings replace triggers
+
+From Flow 1.5.1, a webhook with a non-null `serverFunction` binding cannot also
+be the `source` of a local trigger artefact. In the webhook's environment, the
+binding runs its function, returns that function's response, and skips the
+webhook's triggers, so such a trigger never runs. Validation stops the push
+before any remote write and names the webhook and trigger files. Remove the
+trigger artefact, or set the webhook's `serverFunction` to `null` and keep the
+trigger.
+
+The sample workflow now binds the `motd` webhook to `motd_server` and no longer
+ships `artefacts/triggers/motd_trigger.json`. If your project deployed the
+earlier sample, or you remove a trigger from your own workflow, Flow does not
+delete the remote trigger automatically: deleting a local artefact only makes
+the remote resource an orphan. Full pushes report orphans, scoped (`--paths`)
+pushes skip orphan detection, and only `--delete-orphans` removes them. Clean up
+the old trigger once, after deploying the bound webhook:
+
+1. Apply the sample change, or add the binding and delete the trigger artefact
+   in your own workflow, and deploy the webhook as usual.
+2. Preview a full, unscoped trigger push with orphan deletion:
+
+   ```bash
+   flow push --types triggers --delete-orphans --dry-run
+   ```
+
+3. Check that the `ORPHANS` section lists only the trigger you removed, such as
+   `example_motd` for the sample. Then run the same command without
+   `--dry-run`.
+
+If the preview lists other orphans you want to keep, do not apply it. Delete
+just the old trigger in Canopy instead. Until it is removed, the stale trigger
+is inert while the binding exists, but it would run again if the binding were
+later set to `null`.

@@ -17,7 +17,9 @@ adds MCP server deployment, **1.4.0** adds agent skills, and **1.5.0** adds
 PolyAPI Release 35 support: second-level job intervals and `jobs run`, direct
 webhook-to-server-function connections, in-place subscription updates, Twilio
 token and widget references, server-function background runs and container
-concurrency, and Canopy public access. Its version is
+concurrency, and Canopy public access. **1.5.1** rejects a local trigger
+sourced from a webhook bound to a server function, because the binding
+replaces that webhook's triggers. Its version is
 maintained in `cli/__init__.py`, independently of the workspace and PolyAPI SDK.
 Patch releases contain fixes, minor releases add compatible features, and
 major releases introduce breaking changes. Matching language versions do not
@@ -584,8 +586,24 @@ A webhook can call a server function directly, without a trigger:
 Flow resolves the reference to `serverFunctionId` and includes it in change
 detection. Set `"serverFunction": null` to disconnect a function; omit the field
 to leave the deployed connection unchanged. Raw `serverFunctionId` values are
-rejected. If a local trigger also routes the same webhook to the same function,
-Flow warns that each event would run the function twice. Remove one of them.
+rejected.
+
+A binding replaces the webhook's triggers. In the webhook's own environment,
+each call runs the bound function with the same `(event, headers, params)`
+arguments a trigger would pass, returns that function's response, and skips
+every trigger sourced from the webhook; listeners are still notified. Before
+any remote write, local validation therefore fails when a webhook has a
+non-null `serverFunction` and any local trigger artefact names it as `source`,
+whatever that trigger's destination. The error names the webhook and trigger
+files; remove the trigger or the binding. The check covers every local webhook
+and trigger, so it also applies to `--types webhooks` or `--types triggers`
+pushes. `--skip-invalid` does not skip it.
+
+Prefer a binding for a webhook that calls one function and returns its result.
+Keep a trigger instead, without a binding, for fire-and-forget delivery
+(`waitForResponse: false`) or to fan one webhook out to several functions.
+Deleting a local trigger artefact does not remove the deployed trigger; see
+[Upgrading Flow](../docs/UPGRADING_FLOW.md) for the cleanup.
 
 ## AI functions
 
