@@ -1,138 +1,136 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "type": "object",
-  "properties": {
-    "name": {
-      "type": "string"
-    },
-    "description": {
-      "type": "string"
-    },
-    "apiType": {
-      "type": "string"
-    },
-    "model": {
-      "type": "string"
-    },
-    "systemPrompt": {
-      "type": "string"
-    },
-    "systemPromptVariableId": {
-      "type": "string"
-    },
-    "inputTemplate": {
-      "type": "string"
-    },
-    "arguments": {
-      "type": "array",
-      "items": {
-        "type": "object"
-      }
-    },
-    "returnType": {
-      "type": [
-        "string",
-        "null"
-      ]
-    },
-    "returnTypeSchema": {
-      "type": [
-        "object",
-        "null"
-      ]
-    },
-    "outputSchema": {
-      "type": [
-        "object",
-        "null"
-      ]
-    },
-    "toolFunctions": {
-      "type": "array",
-      "items": {
+  "$ref": "#/components/schemas/UpdateAiFunctionV2Dto",
+  "components": {
+    "schemas": {
+      "UpdateAiFunctionV2Dto": {
         "type": "object",
-        "required": [
-          "id"
-        ],
         "properties": {
-          "id": {
+          "name": {
             "type": "string"
           },
-          "argumentConfig": {
+          "description": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "systemPrompt": {
+            "type": "string"
+          },
+          "systemPromptVariableId": {
+            "type": "string"
+          },
+          "inputTemplate": {
+            "type": "string"
+          },
+          "arguments": {
             "type": "array",
             "items": {
-              "type": "object",
-              "required": [
-                "key",
-                "source"
-              ],
-              "properties": {
-                "key": {
-                  "type": "string"
-                },
-                "source": {
-                  "enum": [
-                    "ai",
-                    "hardcoded",
-                    "argument",
-                    "variable"
-                  ]
-                },
-                "value": true,
-                "argumentKey": {
-                  "type": "string"
-                },
-                "variableId": {
-                  "type": "string"
-                }
-              },
-              "additionalProperties": false
+              "type": "object"
             }
+          },
+          "returnType": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "returnTypeSchema": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "outputSchema": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "errorSchema": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "nullable": true
+          },
+          "toolFunctionIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "toolFunctions": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "clientPromptEnabled": {
+            "type": "boolean"
+          },
+          "clientPromptRequired": {
+            "type": "boolean"
+          },
+          "clientPromptArgName": {
+            "type": "string"
+          },
+          "visibility": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "type": {
+            "type": "string"
+          },
+          "voiceConnectProvider": {
+            "type": "string"
+          },
+          "voiceOutput": {
+            "type": "string",
+            "enum": [
+              "ALLOY",
+              "ASH",
+              "BALLAD",
+              "CORAL",
+              "ECHO",
+              "SAGE",
+              "SHIMMER",
+              "VERSE"
+            ]
+          },
+          "voiceInitialMessage": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "nullable": true,
+            "maxLength": 500
+          },
+          "twilioAuthTokenVariableId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "nullable": true,
+            "description": "Voice functions only. The id of a SECRET variable in this function's environment that holds your own Twilio\nauth token, used to verify Twilio's webhook signature. Omit the field to keep the current selection. Send\n`null` to go back to the platform's Twilio credentials."
+          },
+          "router": {
+            "type": "boolean"
+          },
+          "routerServerFunctionId": {
+            "type": "string"
+          },
+          "apiType": {
+            "type": "string"
           }
-        },
-        "additionalProperties": false
+        }
       }
-    },
-    "clientPromptEnabled": {
-      "type": "boolean"
-    },
-    "clientPromptRequired": {
-      "type": "boolean"
-    },
-    "clientPromptArgName": {
-      "type": "string"
-    },
-    "visibility": {
-      "type": "string"
-    },
-    "state": {
-      "type": "string"
-    },
-    "enabled": {
-      "type": "boolean"
-    },
-    "type": {
-      "type": "string"
-    },
-    "voiceConnectProvider": {
-      "type": "string"
-    },
-    "voiceOutput": {
-      "enum": [
-        "ALLOY",
-        "ASH",
-        "BALLAD",
-        "CORAL",
-        "ECHO",
-        "SAGE",
-        "SHIMMER",
-        "VERSE"
-      ]
-    },
-    "voiceInitialMessage": {
-      "type": "string",
-      "maxLength": 500
     }
-  },
-  "additionalProperties": false
+  }
 }

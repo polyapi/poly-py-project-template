@@ -16,22 +16,22 @@
             "type": "string"
           },
           "visibility": {
+            "type": "string",
             "enum": [
               "ENVIRONMENT",
               "TENANT",
               "PUBLIC"
-            ],
-            "type": "string"
+            ]
           },
           "state": {
+            "type": "string",
             "enum": [
               "ALPHA",
               "BETA",
               "STABLE",
               "DEPRECATED",
               "DISABLED"
-            ],
-            "type": "string"
+            ]
           },
           "eventPayload": {
             "type": "object"
@@ -61,7 +61,10 @@
             "maximum": 599
           },
           "slug": {
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "nullable": true,
             "pattern": "(?:\\w|-)+"
           },
@@ -69,15 +72,7 @@
             "type": "string"
           },
           "method": {
-            "type": "string",
-            "enum": [
-              "GET",
-              "POST",
-              "PUT",
-              "PATCH",
-              "DELETE",
-              "HEAD"
-            ]
+            "type": "string"
           },
           "requirePolyApiKey": {
             "type": "boolean"
@@ -99,8 +94,37 @@
           },
           "ownerUserId": {
             "type": "string"
+          },
+          "queueId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "nullable": true
+          },
+          "serverFunctionId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "nullable": true
           }
-        }
+        },
+        "required": []
+      },
+      "WebhookSecurityFunction": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
       },
       "WebhookHandleXmlParserOptions": {
         "type": "object",
@@ -126,22 +150,7 @@
             "description": "Include the exact decoded XML request body at top-level `rawXml` alongside the parsed payload.\nDefault: `false`."
           }
         }
-      },
-      "WebhookSecurityFunction": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "message": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "id"
-        ]
       }
     }
-  },
-  "$comment": "Corrected templateBody requiredness against poly-alpha 5682119518a1fc1cfd11fb43d71c12852b64a658 packages/model/src/dto/webhook/update-webhook-handle.dto.ts: @IsOptional(). Other fields retain the TypeScript template schema."
+  }
 }

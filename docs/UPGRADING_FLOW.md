@@ -7,7 +7,11 @@ environment. GitHub CLI (`gh`) is not required.
 - [Upgrading with Flow itself](#upgrading-with-flow-itself)
 - [Reviewing customizations and recovering](#reviewing-customizations-and-recovering)
 
-**Python Flow 1.2.0 adds self-update, and 1.3.0 adds MCP server deployment.**
+**Python Flow 1.2.0 adds self-update, 1.3.0 adds MCP server deployment, 1.4.0
+adds agent skills, and 1.5.0 adds PolyAPI Release 35 support.** Release 35
+features need a platform instance that runs Release 35; refresh validators with
+`make build-schema` after upgrading. Flow 1.5.0 also pins `polyapi-python==0.3.21`;
+review the dependency change and run `uv sync --locked` after the update.
 Flow's version is maintained in
 `cli/__init__.py`, separately from the workspace and PolyAPI SDK. Patch releases
 contain fixes, minor releases add compatible features, and major releases

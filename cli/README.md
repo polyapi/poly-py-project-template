@@ -12,8 +12,12 @@ uv run --locked python cli/flow.py --version
 ```
 
 Before dependency setup, `python3 cli/flow.py --version` works with just Python.
-Flow's versioned baseline was **1.1.0**; **1.2.0** adds self-update, and **1.3.0**
-adds MCP server deployment. Its version is
+Flow's versioned baseline was **1.1.0**; **1.2.0** adds self-update, **1.3.0**
+adds MCP server deployment, **1.4.0** adds agent skills, and **1.5.0** adds
+PolyAPI Release 35 support: second-level job intervals and `jobs run`, direct
+webhook-to-server-function connections, in-place subscription updates, Twilio
+token and widget references, server-function background runs and container
+concurrency, and Canopy public access. Its version is
 maintained in `cli/__init__.py`, independently of the workspace and PolyAPI SDK.
 Patch releases contain fixes, minor releases add compatible features, and
 major releases introduce breaking changes. Matching language versions do not
@@ -46,13 +50,13 @@ Run utility commands with `uv run --locked python -m cli.operations --help`.
 | `variables` | `artefacts/vari/**/*.json`, `*.jsonc` | Create/update Vari; existing secret values protected by default |
 | `tables` | `artefacts/tabi/*.json` | Synchronize Tabi definitions |
 | `schemas` | `artefacts/schemas/*.json`, `*.jsonc` | Create/update named schemas |
-| `webhooks` | `artefacts/webhooks/*.json` | Create/update endpoints and security references |
+| `webhooks` | `artefacts/webhooks/*.json` | Create/update endpoints, security references, and direct server-function connections |
 | `triggers` | `artefacts/triggers/*.json` | Resolve webhook and server references; recreate structural changes |
 | `jobs` | `artefacts/jobs/*.json` | Resolve server functions and synchronize schedules |
 | `ai-functions` | `artefacts/ai-functions/*.json`, `*.jsonc` | Create and patch AI functions |
 | `mcp-servers` | `artefacts/mcp-servers/*.json`, `*.jsonc` | Create and patch MCP servers by exact name; never orphans |
 | `canopy` | `artefacts/canopy/*.json`, `*.jsonc` | Create applications and update configuration/description |
-| `subscriptions` | `artefacts/subscriptions/*.json`, `*.jsonc` | Create GraphQL streams; existing streams require confirmed recreation |
+| `subscriptions` | `artefacts/subscriptions/*.json`, `*.jsonc` | Create GraphQL streams; update settings in place; structural changes require confirmed recreation |
 
 Both `artefacts/` and legacy `artifacts/` spellings are discovered.
 
@@ -265,7 +269,8 @@ ENVPATH=workflows/dev.env uv run --locked python cli/flow.py push-dynamic --resu
   fixed tuple positions, and resource values passed to same-file helpers, so
   separate helpers can reuse a local name without losing dependencies.
   Flow also matches returned resource values against the live SDK catalog and
-  table query/row types against native SDK exports, without executing those definitions.
+  table query/row types against native SDK exports, without executing those definitions. An `errorSchema` also needs an `outputSchema`, a required `status`
+property fixed to `"failed"`, and a required string `message` property.
   Direct scoped resource values retain their owning contexts before newly
   synchronized resources appear in that catalog.
   Table-rendering failures are checked against each server's effective generation
@@ -424,6 +429,13 @@ calls and workflow runtime tests do not enforce this Flow guard.
 and orphan ownership. `POLYAPI_NAMESPACES` may provide a comma-separated list
 of explicitly owned roots instead.
 
+`POLY_DEPLOY_GENERATE_CONTEXTS` limits SDK generation after a push to a
+comma-separated list of contexts, passed to `polyapi generate --contexts`. Each
+entry may use `*` for one context segment or `**` for any number of segments,
+for example `example.*.clients` or `example.**`; PolyAPI expands the patterns.
+Patterns cannot be combined with `POLY_DEPLOY_EXCLUDE_ORPHAN_CONTEXTS`, because
+Flow cannot prove that a pattern skips the excluded contexts.
+
 `POLY_DEPLOY_SKIP_PATHS` excludes a comma-separated list of files or directories
 from `push` and `push-dynamic` deployment scans. Paths are relative to the
 repository root, and directory entries include their descendants; glob patterns
@@ -493,6 +505,88 @@ secrecy-level changes. Review these settings before modifying secret Vari.
 Missing values produce a confirmation prompt before synchronization.
 Do not put resolved secrets in artefact files.
 
+## Server function settings
+
+Server-function `polyConfig` accepts two runtime settings:
+
+```python
+polyConfig: PolyServerFunction = {
+    "name": "process_order",
+    "context": "example.orders",
+    "server_side_async": True,
+    "container_concurrency": 4,
+}
+```
+
+- `server_side_async` ("Run in Background") makes PolyAPI answer each call with
+  `202` and an execution ID, and lets a run continue past 30 minutes. Generated
+  SDK callers then receive that execution reference instead of the result.
+- `container_concurrency` limits concurrent requests per container. Use a
+  non-negative whole number, or `None` to remove the override. Omit it to leave
+  the deployed value alone.
+
+Both apply only to server functions. Function manifests use `serverSideAsync`
+and `containerConcurrency`. The installed SDK's `PolyServerFunction` type does
+not declare these keys yet, so a strict type checker may flag them; Flow reads
+them from the literal. Autoscaling fields are reserved for super admins and are
+not supported in `polyConfig`.
+
+When only these settings differ from the deployed function, Flow sends
+`PATCH /functions/server/{id}` instead of uploading the code again. PolyAPI still
+rolls out a new revision with the same code, and the deployed source keeps its
+previous `polyConfig` text until the next code change. Flow ignores those two
+keys when comparing source. With a code change, Flow deploys the code and then
+patches `containerConcurrency`; it does the same right after creating a function.
+A declared value is re-applied after every code deployment, even when PolyAPI
+already stores it, because a code deployment currently drops the override at
+the runtime level.
+`--force` redeploys the code. `push-dynamic` plans settings-only changes the same
+way, without rebuilding consumers.
+
+## Jobs
+
+Interval schedules accept a whole number of minutes, or a duration string:
+
+```json
+{"schedule": {"type": "interval", "value": "30s"}}
+```
+
+`5` and `"5"` mean five minutes; `"30s"`, `"15m"`, and `"2h"` are durations.
+The minimum is 10 seconds, and Flow rejects shorter or malformed values before
+any write. PolyAPI reports whole minutes as a number and other intervals as a
+seconds string, so Flow compares intervals in seconds: `"60s"`, `"1m"`, and a
+deployed `1` are the same schedule and do not cause an update.
+
+Run a deployed job once, outside its schedule, by exact name or ID:
+
+```bash
+flow jobs run example_motd
+ENVPATH=workflows/dev.env uv run --locked python -m cli.operations jobs run example_motd --dry-run
+```
+
+The command uses the same target pin and production safeguards as other
+operations. It queues the run and prints its `runId`; it does not wait for the
+run to finish. `--dry-run` only finds the job.
+
+## Webhooks
+
+A webhook can call a server function directly, without a trigger:
+
+```json
+{
+  "serverFunction": {
+    "functionContext": "example.sample_workflow",
+    "functionName": "motd_server"
+  }
+}
+```
+
+Flow resolves the reference to `serverFunctionId` and includes it in change
+detection. Set `"serverFunction": null` to disconnect a function; omit the field
+to leave the deployed connection unchanged. Raw `serverFunctionId` values are
+rejected. If a local trigger also routes the same webhook to the same function,
+Flow warns that each event would run the function twice. Remove one of them.
+
 ## AI functions
 
 See `workflows/src/sample_workflow/artefacts/ai-functions/uplifting_weather.json`.
@@ -531,8 +625,31 @@ For a Vari-backed system prompt, replace `systemPrompt` with:
 }
 ```
 
+Voice functions can verify Twilio's webhook signature with your own auth token.
+Reference a SECRET Vari in the function's environment:
+
+```json
+{
+  "twilioAuthTokenVariable": {
+    "variableName": "twilio_auth_token",
+    "variableContext": "example.configuration"
+  },
+  "voiceInitialMessage": null
+}
+```
+
+Flow resolves it to `twilioAuthTokenVariableId` and stops before any write if
+the function's `type` is not `VOICE` or the variable is not SECRET. Set `twilioAuthTokenVariable` to `null` to return to
+the platform's Twilio credentials. `voiceInitialMessage: null` skips the spoken
+"please wait" greeting.
+
+`outputSchema` and `errorSchema` must describe an object at the root, because
+structured output does not support root primitives, arrays, unions, `enum`, or
+`const`. Flow checks this locally, following a root `$ref` into the schema's own
+definitions.
+
 For AI artefacts, use portable references instead of environment-specific `id`,
-`variableId`, or `systemPromptVariableId` values. Resolution fails on missing or ambiguous
+`variableId`, `systemPromptVariableId`, or `twilioAuthTokenVariableId` values. Resolution fails on missing or ambiguous
 references. Create/update payloads are checked against the JSON schemas in
 `cli/schemas/`. Context/provider changes are not patched
 automatically. Omitted fields are preserved; explicit empty arrays remove
@@ -570,6 +687,29 @@ coding agents and chat assistants. Keep each server in
   ]
 }
 ```
+
+A tool can also show a widget. Each widget setting reads a namespace-owned Vari:
+
+```json
+{
+  "functionName": "getCurrentWeather",
+  "functionContext": "example.sample_workflow",
+  "widget": {
+    "enabled": true,
+    "settings": [
+      {
+        "key": "theme",
+        "variable": {
+          "variableName": "weather_widget_theme",
+          "variableContext": "example.sample_workflow"
+        }
+      }
+    ]
+  }
+}
+```
+
+Flow resolves each `variable` to `variableId`; setting keys must be unique.
 
 Tool references use `functionName` and `functionContext` and resolve against
 API and server functions in the target environment, the only tools the MCP
@@ -634,6 +774,13 @@ JSON (`{"example-workflow":"application-id"}`) or comma-separated
 ambiguous targets fail before writes. A saved ID from a different environment
 falls back to subpath/name.
 
+`publicAccess: true` lets anyone with the application's link use it without
+signing in. It only applies to PUBLIC applications, so Flow requires
+`"visibility": "PUBLIC"` in the artefact and stops if the deployed application
+is not PUBLIC. When a push would newly enable it, Flow asks for `[y/N]`
+confirmation in an interactive terminal; without one, it skips that
+application with a warning and reports it as blocked. Dry runs only warn.
+
 `description` and creation-time `visibility` are application metadata.
 Configuration goes to `/applications/{id}/config`; description changes use
 the metadata endpoint. An omitted description is preserved. Creation writes
@@ -663,12 +810,29 @@ handler. Nested `paramsObject` values may use:
 Flow resolves references to IDs in memory. Raw `functionId`, `paramsVariableId`,
 and `paramsSfxId` are not portable template inputs.
 
-Existing subscriptions are reported as blocked because in-place updates are
-not supported by this Flow path. `--force` requests recreation: preview first,
-then type `YES` interactively for each existing stream. Flow deletes it, waits
-30 seconds for its connection to close, and creates the replacement once.
-Offsets may reset. If creation fails after deletion, inspect the environment
-before rerunning; the old subscription has already been removed.
+Flow reads each existing subscription and compares the fields the artefact
+declares:
+
+- Unchanged subscriptions are skipped.
+- `description`, `visibility`, `ownerUserId`, `enabled`, `functionParams`,
+  `ohipMaintainOffset`, `eventInactivityThresholdMs`, and `queueId` changes are
+  sent with `PATCH /subscriptions/graphql/{id}` to the existing stream. Enabling,
+  disabling, and inactivity settings apply without a restart; PolyAPI restarts
+  the connection itself for `functionParams` and `ohipMaintainOffset`. Dry runs
+  list the fields they would update.
+- `type`, `transportProtocol`, `websocketUrl`, `query`, and the destination
+  function are structural. Flow reports such a subscription as blocked.
+
+PolyAPI stores `paramsObject` redacted and does not return the OHIP offset
+selection, so Flow cannot detect changes to them. `--force` on a subscription
+without structural changes patches every declared setting and resends
+`paramsObject`. `ohipOffsetSelection` and `ohipOffset` apply only at creation.
+
+For structural changes, `--force` requests recreation: preview first, then
+type `YES` interactively for each stream. Flow deletes it, waits 30 seconds for
+its connection to close, and creates the replacement once. Offsets may reset.
+If creation fails after deletion, inspect the environment before rerunning; the
+old subscription has already been removed.
 
 ## Orphans and recovery
 
@@ -751,6 +915,9 @@ applies to saved-model previews. `--generate-only` can export recursive models
 for review because it neither trains resources nor generates the SDK. Do not
 regenerate typed bindings for those cycles with the current SDK; resolve the SDK
 limitation or deliberately review a schema redesign first.
+
+`delete-content --context` matches an exact context, plus descendants with
+`--include-children`; it does not expand wildcard patterns.
 
 Cleanup always previews metadata first. `--apply` requires typing `DELETE` in an
 interactive terminal. Every delete is followed by a 404 readback; an uncertain

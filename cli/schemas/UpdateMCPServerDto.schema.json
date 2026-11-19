@@ -67,6 +67,9 @@
             "items": {
               "$ref": "#/components/schemas/MCPToolFunctionArgumentConfigDto"
             }
+          },
+          "widget": {
+            "$ref": "#/components/schemas/MCPToolFunctionWidgetConfigDto"
           }
         },
         "required": [
@@ -99,6 +102,38 @@
         "required": [
           "key",
           "source"
+        ]
+      },
+      "MCPToolFunctionWidgetConfigDto": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "settings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MCPToolWidgetSettingDto"
+            }
+          }
+        },
+        "required": [
+          "enabled"
+        ]
+      },
+      "MCPToolWidgetSettingDto": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "variableId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "variableId"
         ]
       }
     }

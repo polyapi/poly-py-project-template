@@ -423,3 +423,23 @@ def test_standalone_schema_refresh_preserves_requests_tls_context():
 
 def test_runtime_tests_preserve_requests_tls_context():
     assert_requests_tls_verification()
+
+
+def test_server_function_update_schema_keeps_container_concurrency_optional():
+    spec = platform_spec()
+    spec["components"]["schemas"]["UpdateServerCustomFunctionDto"] = {
+        "type": "object",
+        "properties": {
+            "serverSideAsync": {"type": "boolean"},
+            "containerConcurrency": {"type": "number"},
+        },
+        "required": ["containerConcurrency"],
+    }
+    document = refresh.endpoint_schemas(spec)[
+        "UpdateServerCustomFunctionDto.schema.json"
+    ]
+    validator = Draft7Validator(document)
+    assert validator.is_valid({"serverSideAsync": True})
+    assert validator.is_valid({"containerConcurrency": None})
+    assert validator.is_valid({"containerConcurrency": 4})
+    assert not validator.is_valid({"containerConcurrency": "4"})

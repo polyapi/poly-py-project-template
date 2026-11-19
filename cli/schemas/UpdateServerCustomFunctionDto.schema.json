@@ -1,0 +1,152 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$ref": "#/components/schemas/UpdateServerCustomFunctionDto",
+  "components": {
+    "schemas": {
+      "UpdateServerCustomFunctionDto": {
+        "type": "object",
+        "properties": {
+          "logsEnabled": {
+            "type": "boolean"
+          },
+          "image": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "nullable": true,
+            "pattern": "^[^/]*$"
+          },
+          "tolerations": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "nodeSelector": {
+            "type": "object"
+          },
+          "serverSideAsync": {
+            "type": "boolean"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "alwaysOn": {
+            "type": "boolean"
+          },
+          "minScale": {
+            "type": "number",
+            "description": "Super admins only. An integer from 0 to 20. Positive values require `alwaysOn = true`\nin the request or saved function. Omission preserves the saved value; always-on functions default to 1.\nDisabling `alwaysOn` clears an omitted minimum.\nThe effective minimum must not exceed `maxScale`.",
+            "example": 1,
+            "minimum": 0,
+            "maximum": 20
+          },
+          "maxScale": {
+            "type": "number",
+            "description": "Super admins only. The maximum number of replicas, an integer from 1 to 30.\nOmission preserves the saved value, or defaults to 3 if none is saved.\nMust be at least the effective `minScale`.",
+            "example": 3,
+            "minimum": 1,
+            "maximum": 30
+          },
+          "sleepCycleInterval": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "nullable": true
+          },
+          "limitTime": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "nullable": true
+          },
+          "containerConcurrency": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "autoscalingMetric": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "nullable": true,
+            "description": "The metric Knative scales this function on. Super admins only. Send `null` to go back to the default behaviour.",
+            "example": "rps"
+          },
+          "autoscalingTarget": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "nullable": true,
+            "description": "The level of `autoscalingMetric` Knative aims to keep each replica at: requests per second, or concurrent\nrequests. A lower number scales up sooner. Super admins only. Send `null` to go back to the default.",
+            "example": 50,
+            "minimum": 1,
+            "maximum": 1000
+          },
+          "executionApiKey": {
+            "type": "string"
+          },
+          "cachePolyLibrary": {
+            "type": "boolean"
+          },
+          "enableVpn": {
+            "type": "boolean"
+          },
+          "usePerch": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "context": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "visibility": {
+            "type": "string",
+            "enum": [
+              "ENVIRONMENT",
+              "TENANT",
+              "PUBLIC"
+            ]
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "ALPHA",
+              "BETA",
+              "STABLE",
+              "DEPRECATED",
+              "DISABLED"
+            ]
+          },
+          "arguments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Argument"
+            }
+          },
+          "ownerUserId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "nullable": true
+          }
+        }
+      },
+      "Argument": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  }
+}

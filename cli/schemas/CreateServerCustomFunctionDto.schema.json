@@ -9,6 +9,23 @@
           "logsEnabled": {
             "type": "boolean"
           },
+          "image": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "nullable": true,
+            "pattern": "^[^/]*$"
+          },
+          "tolerations": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "nodeSelector": {
+            "type": "object"
+          },
           "serverSideAsync": {
             "type": "boolean"
           },
@@ -23,6 +40,9 @@
             "type": "string"
           },
           "cachePolyLibrary": {
+            "type": "boolean"
+          },
+          "usePerch": {
             "type": "boolean"
           },
           "name": {
@@ -48,12 +68,12 @@
             "type": "string"
           },
           "visibility": {
+            "type": "string",
             "enum": [
               "ENVIRONMENT",
               "TENANT",
               "PUBLIC"
-            ],
-            "type": "string"
+            ]
           },
           "typeSchemas": {
             "type": "object"
@@ -69,6 +89,10 @@
             "items": {
               "$ref": "#/components/schemas/FunctionArgument"
             }
+          },
+          "synchronous": {
+            "type": "boolean",
+            "description": "Set when the client already transpiled the function.\nOmitted calls keep the historical default and let the server transpiler decide."
           },
           "requirements": {
             "nullable": true,

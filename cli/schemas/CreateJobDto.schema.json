@@ -3,26 +3,6 @@
   "$ref": "#/components/schemas/CreateJobDto",
   "components": {
     "schemas": {
-      "CreateFunctionJob": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "eventPayload": {
-            "type": "object"
-          },
-          "headersPayload": {
-            "type": "object"
-          },
-          "paramsPayload": {
-            "type": "object"
-          }
-        },
-        "required": [
-          "id"
-        ]
-      },
       "CreateJobDto": {
         "type": "object",
         "properties": {
@@ -49,11 +29,11 @@
             }
           },
           "executionType": {
+            "type": "string",
             "enum": [
               "sequential",
               "parallel"
-            ],
-            "type": "string"
+            ]
           },
           "enabled": {
             "type": "boolean"
@@ -69,6 +49,35 @@
           "enabled"
         ]
       },
+      "Periodical": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "enum": [
+              "periodical"
+            ],
+            "type": "string"
+          },
+          "acceptableDelayTime": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "nullable": true,
+            "minimum": 0,
+            "description": "Acceptable Delay Time in minutes. Whole integers, minimum 0.",
+            "example": 30
+          },
+          "value": {
+            "type": "string",
+            "description": "You can try your cron expressions here: https://crontab.guru"
+          }
+        },
+        "required": [
+          "type",
+          "value"
+        ]
+      },
       "Interval": {
         "type": "object",
         "properties": {
@@ -78,16 +87,27 @@
             ],
             "type": "string"
           },
+          "value": {
+            "description": "Whole number of minutes (e.g. 5), or a duration string such as \"10s\", \"30m\" or \"2h\". Minimum 10 seconds.",
+            "oneOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "example": "30s"
+          },
           "acceptableDelayTime": {
-            "type": "number",
+            "type": [
+              "number",
+              "null"
+            ],
             "nullable": true,
             "minimum": 0,
             "description": "Acceptable Delay Time in minutes. Whole integers, minimum 0.",
             "example": 30
-          },
-          "value": {
-            "type": "number",
-            "description": "The interval in minutes."
           }
         },
         "required": [
@@ -105,7 +125,10 @@
             "type": "string"
           },
           "acceptableDelayTime": {
-            "type": "number",
+            "type": [
+              "number",
+              "null"
+            ],
             "nullable": true,
             "minimum": 0,
             "description": "Acceptable Delay Time in minutes. Whole integers, minimum 0.",
@@ -122,30 +145,24 @@
           "value"
         ]
       },
-      "Periodical": {
+      "CreateFunctionJob": {
         "type": "object",
         "properties": {
-          "type": {
-            "enum": [
-              "periodical"
-            ],
+          "id": {
             "type": "string"
           },
-          "acceptableDelayTime": {
-            "type": "number",
-            "nullable": true,
-            "minimum": 0,
-            "description": "Acceptable Delay Time in minutes. Whole integers, minimum 0.",
-            "example": 30
+          "eventPayload": {
+            "type": "object"
           },
-          "value": {
-            "type": "string",
-            "description": "You can try your cron expressions here: https://crontab.guru"
+          "headersPayload": {
+            "type": "object"
+          },
+          "paramsPayload": {
+            "type": "object"
           }
         },
         "required": [
-          "type",
-          "value"
+          "id"
         ]
       }
     }

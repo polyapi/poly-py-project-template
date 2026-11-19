@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.12.12, <3.13"
 
 [[package]]
@@ -436,7 +436,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "jsonschema", specifier = "==4.26.0" },
-    { name = "polyapi-python", specifier = "==0.3.21.dev1" },
+    { name = "polyapi-python", specifier = "==0.3.21" },
     { name = "python-dotenv", specifier = "==1.2.2" },
     { name = "pyyaml", specifier = "==6.0.3" },
     { name = "requests", specifier = "==2.33.0" },
@@ -453,7 +453,7 @@ dev = [
 
 [[package]]
 name = "polyapi-python"
-version = "0.3.21.dev1"
+version = "0.3.21"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "colorama" },
@@ -466,9 +466,9 @@ dependencies = [
     { name = "truststore" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a3/24/44bcc8b6966aec87b58f9fda3f6dabfeb0081531d1bbc5ab1a817264aa77/polyapi_python-0.3.21.dev1.tar.gz", hash = "sha256:b981da4ffbd41da0c9180f9c01669feff1dd79e858c3a95b1e3d60bb7e8f9abd", size = 94961, upload-time = "2026-10-21T15:14:52.961Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/3a/25/8303f17089173ab295e190e8730f0f025b5e4dd60d6b06ded7782db227b2/polyapi_python-0.3.21.tar.gz", hash = "sha256:954d3d3eceb6a7d379af8e2e53b735f0da16cbc55594b4e0f770409c677b72f6", size = 95907, upload-time = "2026-11-11T17:48:24.834Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/3e/ab/e3b93563d875178ef6a401ae4739791e5be0d63b11ed7bcb33646eca578f/polyapi_python-0.3.21.dev1-py3-none-any.whl", hash = "sha256:4395ae588a9fca6f8646324ea6149be4bb1053bb6c6419e8cad7a5588b200c4e", size = 68960, upload-time = "2026-10-21T15:14:51.429Z" },
+    { url = "https://files.pythonhosted.org/packages/7a/49/ad6cf02f81606248b456dcf6d49dadf0b5b4ab7701eda3b4b66dbeec931f/polyapi_python-0.3.21-py3-none-any.whl", hash = "sha256:80f9f2632d8b54f65673b5ae8152f4a43b2c91b7074bea26395f6c6b58ddaaea", size = 68902, upload-time = "2026-11-11T17:48:23.301Z" },
 ]
 
 [[package]]

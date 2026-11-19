@@ -18,5 +18,6 @@
       "variableContext": "example.streaming",
       "path": null
     }
-  }
+  },
+  "eventInactivityThresholdMs": 300000
 }

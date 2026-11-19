@@ -195,8 +195,9 @@ newer 3.12 interpreter. This compatibility range does not change the setup or
 CI runtime pin.
 
 Local checks need no API key and do not deploy anything. The SDK is pinned to
-`polyapi-python==0.3.21.dev1`. This prerelease includes the Requests 2.33.0
-and Socket.IO 5.16.2 dependency fixes. Review SDK upgrades and regenerate
+`polyapi-python==0.3.21`. This release includes the Requests 2.33.0 and
+Socket.IO 5.16.2 dependency fixes and generates return types for AI functions.
+Review SDK upgrades and regenerate
 `uv.lock` together. The local SDK pin does not change platform-managed
 server-function images.
 

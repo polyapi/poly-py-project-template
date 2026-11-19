@@ -10,11 +10,17 @@
             "type": "string"
           },
           "context": {
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "nullable": true
           },
           "description": {
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "nullable": true
           },
           "ownerUserId": {
@@ -48,9 +54,7 @@
           "type": {
             "type": "string"
           },
-          "default": {
-            "type": "object"
-          },
+          "default": true,
           "required": {
             "type": "boolean"
           },
@@ -61,7 +65,10 @@
             "type": "boolean"
           },
           "schema": {
-            "type": "object",
+            "type": [
+              "object",
+              "null"
+            ],
             "nullable": true
           }
         },
