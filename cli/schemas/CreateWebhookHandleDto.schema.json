@@ -54,7 +54,10 @@
             "maximum": 599
           },
           "slug": {
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "nullable": true,
             "description": "Alphanumeric characters as well as \"-\", \"_\"",
             "example": "foo",
@@ -64,15 +67,7 @@
             "type": "string"
           },
           "method": {
-            "type": "string",
-            "enum": [
-              "GET",
-              "POST",
-              "PUT",
-              "PATCH",
-              "DELETE",
-              "HEAD"
-            ]
+            "type": "string"
           },
           "requirePolyApiKey": {
             "type": "boolean"
@@ -88,11 +83,39 @@
           },
           "ownerUserId": {
             "type": "string"
+          },
+          "queueId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "nullable": true
+          },
+          "serverFunctionId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "nullable": true
           }
         },
         "required": [
           "name",
           "description"
+        ]
+      },
+      "WebhookSecurityFunction": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
         ]
       },
       "WebhookHandleXmlParserOptions": {
@@ -119,20 +142,6 @@
             "description": "Include the exact decoded XML request body at top-level `rawXml` alongside the parsed payload.\nDefault: `false`."
           }
         }
-      },
-      "WebhookSecurityFunction": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "message": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "id"
-        ]
       }
     }
   }

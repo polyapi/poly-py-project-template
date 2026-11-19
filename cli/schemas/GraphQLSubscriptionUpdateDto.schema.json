@@ -20,28 +20,28 @@
             "nullable": true
           },
           "visibility": {
+            "type": "string",
             "enum": [
               "ENVIRONMENT",
               "TENANT"
-            ],
-            "type": "string"
+            ]
           },
           "ownerUserId": {
             "type": "string"
           },
           "type": {
+            "type": "string",
             "enum": [
               "CUSTOM",
               "OHIP"
-            ],
-            "type": "string"
+            ]
           },
           "transportProtocol": {
+            "type": "string",
             "enum": [
               "WS",
               "HTTP"
-            ],
-            "type": "string"
+            ]
           },
           "websocketUrl": {
             "type": "string"
@@ -84,11 +84,11 @@
             "type": "boolean"
           },
           "ohipOffsetSelection": {
+            "type": "string",
             "enum": [
               "PROVIDER_HIGHEST",
               "PERSISTED"
-            ],
-            "type": "string"
+            ]
           },
           "ohipMaintainOffset": {
             "type": "boolean"
@@ -101,6 +101,13 @@
             "nullable": true,
             "minimum": 60000,
             "maximum": 86400000
+          },
+          "queueId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "nullable": true
           }
         }
       }

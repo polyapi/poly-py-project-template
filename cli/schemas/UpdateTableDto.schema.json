@@ -3,37 +3,6 @@
   "$ref": "#/components/schemas/UpdateTableDto",
   "components": {
     "schemas": {
-      "TableColumnDto": {
-        "type": "object",
-        "properties": {
-          "name": {
-            "type": "string"
-          },
-          "type": {
-            "type": "string"
-          },
-          "default": {
-            "type": "object"
-          },
-          "required": {
-            "type": "boolean"
-          },
-          "unique": {
-            "type": "boolean"
-          },
-          "primary": {
-            "type": "boolean"
-          },
-          "schema": {
-            "type": "object",
-            "nullable": true
-          }
-        },
-        "required": [
-          "name",
-          "type"
-        ]
-      },
       "UpdateTableDto": {
         "type": "object",
         "properties": {
@@ -63,6 +32,38 @@
             }
           }
         }
+      },
+      "TableColumnDto": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "default": true,
+          "required": {
+            "type": "boolean"
+          },
+          "unique": {
+            "type": "boolean"
+          },
+          "primary": {
+            "type": "boolean"
+          },
+          "schema": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "nullable": true
+          }
+        },
+        "required": [
+          "name",
+          "type"
+        ]
       }
     }
   }

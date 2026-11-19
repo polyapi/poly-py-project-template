@@ -83,7 +83,7 @@ triggers supply one error object instead; do not reuse those signatures blindly.
 - For SECRET values, pass `.inject("path")` unchanged into a generated API/server
   call. Do not unwrap, cache, stringify, or pass it through a client function.
 - Use `TypedDict` from `typing_extensions` for structured runtime contracts.
-- The SDK pinned in [pyproject.toml](../pyproject.toml) is 0.3.21.dev1. Its deployable
+- The SDK pinned in [pyproject.toml](../pyproject.toml) is 0.3.21. Its deployable
   boundaries use `Dict`/`List`, supported scalars, or local
   named `TypedDict` types. Builtin generics, unions, `Literal`, and `None` returns
   can silently become `any`; verify native emitted schemas. Keep enum checks at

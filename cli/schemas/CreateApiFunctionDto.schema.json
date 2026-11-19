@@ -3,265 +3,146 @@
   "$ref": "#/components/schemas/CreateApiFunctionDto",
   "components": {
     "schemas": {
-      "ApiKeyAuthSource": {
+      "CreateApiFunctionDto": {
         "type": "object",
         "properties": {
-          "apikey": {
-            "uniqueItems": true,
-            "minItems": 3,
-            "maxItems": 3,
-            "type": "array",
-            "description": "Items uniqueness is determined by \"key\" property.",
-            "items": {
-              "anyOf": [
-                {
-                  "$ref": "#/components/schemas/ApiKeyInEntrySource"
-                },
-                {
-                  "$ref": "#/components/schemas/KeyValueApiKeyEntrySource"
-                }
-              ]
-            },
-            "minimum": 3,
-            "maximum": 3
+          "source": {
+            "$ref": "#/components/schemas/CreateSourceDto"
           },
-          "type": {
-            "type": "string",
-            "enum": [
-              "apikey"
-            ]
-          }
-        },
-        "required": [
-          "apikey",
-          "type"
-        ]
-      },
-      "ApiKeyInEntrySource": {
-        "type": "object",
-        "properties": {
-          "key": {
-            "type": "string",
-            "enum": [
-              "in"
-            ]
-          },
-          "value": {
-            "type": "string",
-            "enum": [
-              "header",
-              "query"
-            ]
-          }
-        },
-        "required": [
-          "key",
-          "value"
-        ]
-      },
-      "ArgumentSerializationDto": {
-        "type": "object",
-        "properties": {
-          "style": {
+          "name": {
             "type": "string"
           },
-          "explode": {
-            "type": "boolean"
-          }
-        }
-      },
-      "ArgumentsMetadataDto": {
-        "type": "object",
-        "properties": {
-          "name": {
+          "context": {
             "type": "string"
           },
           "description": {
             "type": "string"
           },
-          "required": {
-            "type": "boolean"
-          },
-          "secure": {
-            "type": "boolean"
-          },
-          "type": {
-            "type": "string"
-          },
-          "typeSchema": {
-            "type": "object"
-          },
-          "typeObject": {
-            "type": "object"
-          },
-          "payload": {
-            "type": "boolean"
-          },
-          "variable": {
-            "type": "string",
-            "nullable": true
-          },
-          "removeIfNotPresentOnExecute": {
-            "type": "boolean"
-          },
-          "serialization": {
-            "$ref": "#/components/schemas/ArgumentSerializationDto"
-          }
-        },
-        "required": [
-          "name"
-        ]
-      },
-      "Awsv4AccessKeyEntry": {
-        "type": "object",
-        "properties": {
-          "value": {
-            "type": "string"
-          },
-          "key": {
-            "type": "string",
-            "enum": [
-              "accessKey"
-            ]
-          }
-        },
-        "required": [
-          "value",
-          "key"
-        ]
-      },
-      "Awsv4AddToQueryEntry": {
-        "type": "object",
-        "properties": {
-          "value": {
-            "type": "boolean"
-          },
-          "key": {
-            "type": "string",
-            "enum": [
-              "addAuthDataToQuery"
-            ]
-          }
-        },
-        "required": [
-          "value",
-          "key"
-        ]
-      },
-      "Awsv4AuthSource": {
-        "type": "object",
-        "properties": {
-          "awsv4": {
+          "arguments": {
             "uniqueItems": true,
-            "minItems": 2,
             "type": "array",
-            "description": "Items uniqueness is determined by \"key\" property.",
             "items": {
-              "anyOf": [
-                {
-                  "$ref": "#/components/schemas/Awsv4ServiceEntry"
-                },
-                {
-                  "$ref": "#/components/schemas/Awsv4RegionEntry"
-                },
-                {
-                  "$ref": "#/components/schemas/Awsv4AccessKeyEntry"
-                },
-                {
-                  "$ref": "#/components/schemas/Awsv4SecretKeyEntry"
-                },
-                {
-                  "$ref": "#/components/schemas/Awsv4SessionTokenEntry"
-                },
-                {
-                  "$ref": "#/components/schemas/Awsv4AddToQueryEntry"
-                }
-              ]
-            },
-            "minimum": 3
+              "$ref": "#/components/schemas/ArgumentsMetadataDto"
+            }
           },
-          "type": {
-            "type": "string",
+          "visibility": {
             "enum": [
-              "awsv4"
-            ]
-          }
-        },
-        "required": [
-          "awsv4",
-          "type"
-        ]
-      },
-      "Awsv4RegionEntry": {
-        "type": "object",
-        "properties": {
-          "value": {
+              "ENVIRONMENT",
+              "TENANT",
+              "PUBLIC"
+            ],
             "type": "string"
           },
-          "key": {
-            "type": "string",
+          "state": {
             "enum": [
-              "region"
-            ]
-          }
-        },
-        "required": [
-          "value",
-          "key"
-        ]
-      },
-      "Awsv4SecretKeyEntry": {
-        "type": "object",
-        "properties": {
-          "value": {
+              "ALPHA",
+              "BETA",
+              "STABLE",
+              "DEPRECATED",
+              "DISABLED"
+            ],
             "type": "string"
           },
-          "key": {
-            "type": "string",
-            "enum": [
-              "secretKey"
-            ]
-          }
-        },
-        "required": [
-          "value",
-          "key"
-        ]
-      },
-      "Awsv4ServiceEntry": {
-        "type": "object",
-        "properties": {
-          "value": {
+          "enabledRedirect": {
+            "type": "boolean"
+          },
+          "returnType": {
             "type": "string"
           },
-          "key": {
-            "type": "string",
-            "enum": [
-              "service"
-            ]
-          }
-        },
-        "required": [
-          "value",
-          "key"
-        ]
-      },
-      "Awsv4SessionTokenEntry": {
-        "type": "object",
-        "properties": {
-          "value": {
+          "returnTypeSchema": {
+            "type": "object"
+          },
+          "otherReturnTypes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReturnTypeDto"
+            }
+          },
+          "destinationEnvironmentId": {
             "type": "string"
           },
-          "key": {
-            "type": "string",
-            "enum": [
-              "sessionToken"
-            ]
+          "ownerUserId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "nullable": true
           }
         },
         "required": [
-          "value",
-          "key"
+          "source",
+          "name",
+          "context",
+          "description"
+        ]
+      },
+      "CreateSourceDto": {
+        "type": "object",
+        "properties": {
+          "auth": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/BasicAuthSource"
+              },
+              {
+                "$ref": "#/components/schemas/BearerAuthSource"
+              },
+              {
+                "$ref": "#/components/schemas/ApiKeyAuthSource"
+              },
+              {
+                "$ref": "#/components/schemas/Awsv4AuthSource"
+              },
+              {
+                "$ref": "#/components/schemas/NoAuthSource"
+              }
+            ]
+          },
+          "body": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/UrlEncodedBodySource"
+              },
+              {
+                "$ref": "#/components/schemas/FormDataBodySource"
+              },
+              {
+                "$ref": "#/components/schemas/RawBodySource"
+              },
+              {
+                "$ref": "#/components/schemas/EmptyBodySource"
+              },
+              {
+                "$ref": "#/components/schemas/FileBodySource"
+              }
+            ]
+          },
+          "url": {
+            "type": "string"
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "GET",
+              "POST",
+              "PUT",
+              "PATCH",
+              "DELETE",
+              "HEAD"
+            ]
+          },
+          "headers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EntrySource"
+            }
+          }
+        },
+        "required": [
+          "auth",
+          "body",
+          "url",
+          "method"
         ]
       },
       "BasicAuthSource": {
@@ -350,132 +231,257 @@
           "value"
         ]
       },
-      "CreateApiFunctionDto": {
+      "ApiKeyAuthSource": {
         "type": "object",
         "properties": {
-          "source": {
-            "$ref": "#/components/schemas/CreateSourceDto"
-          },
-          "name": {
-            "type": "string"
-          },
-          "context": {
-            "type": "string"
-          },
-          "description": {
-            "type": "string"
-          },
-          "arguments": {
+          "apikey": {
             "uniqueItems": true,
+            "minItems": 3,
+            "maxItems": 3,
             "type": "array",
+            "description": "Items uniqueness is determined by \"key\" property.",
             "items": {
-              "$ref": "#/components/schemas/ArgumentsMetadataDto"
-            }
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/ApiKeyInEntrySource"
+                },
+                {
+                  "$ref": "#/components/schemas/KeyValueApiKeyEntrySource"
+                }
+              ]
+            },
+            "minimum": 3,
+            "maximum": 3
           },
-          "visibility": {
-            "enum": [
-              "ENVIRONMENT",
-              "TENANT",
-              "PUBLIC"
-            ],
-            "type": "string"
-          },
-          "state": {
-            "enum": [
-              "ALPHA",
-              "BETA",
-              "STABLE",
-              "DEPRECATED",
-              "DISABLED"
-            ],
-            "type": "string"
-          },
-          "enabledRedirect": {
-            "type": "boolean"
-          },
-          "returnType": {
-            "type": "string"
-          },
-          "returnTypeSchema": {
-            "type": "object"
-          },
-          "otherReturnTypes": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ReturnTypeDto"
-            }
-          },
-          "destinationEnvironmentId": {
-            "type": "string"
-          },
-          "ownerUserId": {
+          "type": {
             "type": "string",
-            "nullable": true
+            "enum": [
+              "apikey"
+            ]
           }
         },
         "required": [
-          "source",
-          "name",
-          "context",
-          "description"
+          "apikey",
+          "type"
         ]
       },
-      "CreateSourceDto": {
+      "ApiKeyInEntrySource": {
         "type": "object",
         "properties": {
-          "auth": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/BasicAuthSource"
-              },
-              {
-                "$ref": "#/components/schemas/BearerAuthSource"
-              },
-              {
-                "$ref": "#/components/schemas/ApiKeyAuthSource"
-              },
-              {
-                "$ref": "#/components/schemas/Awsv4AuthSource"
-              },
-              {
-                "$ref": "#/components/schemas/NoAuthSource"
-              }
-            ]
-          },
-          "body": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/UrlEncodedBodySource"
-              },
-              {
-                "$ref": "#/components/schemas/FormDataBodySource"
-              },
-              {
-                "$ref": "#/components/schemas/RawBodySource"
-              },
-              {
-                "$ref": "#/components/schemas/EmptyBodySource"
-              },
-              {
-                "$ref": "#/components/schemas/FileBodySource"
-              }
-            ]
-          },
-          "url": {
-            "type": "string"
-          },
-          "method": {
+          "key": {
             "type": "string",
             "enum": [
-              "GET",
-              "POST",
-              "PUT",
-              "PATCH",
-              "DELETE",
-              "HEAD"
+              "in"
             ]
           },
-          "headers": {
+          "value": {
+            "type": "string",
+            "enum": [
+              "header",
+              "query"
+            ]
+          }
+        },
+        "required": [
+          "key",
+          "value"
+        ]
+      },
+      "KeyValueApiKeyEntrySource": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string",
+            "enum": [
+              "key",
+              "value"
+            ]
+          }
+        },
+        "required": [
+          "value",
+          "key"
+        ]
+      },
+      "Awsv4AuthSource": {
+        "type": "object",
+        "properties": {
+          "awsv4": {
+            "uniqueItems": true,
+            "minItems": 2,
+            "type": "array",
+            "description": "Items uniqueness is determined by \"key\" property.",
+            "items": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/Awsv4ServiceEntry"
+                },
+                {
+                  "$ref": "#/components/schemas/Awsv4RegionEntry"
+                },
+                {
+                  "$ref": "#/components/schemas/Awsv4AccessKeyEntry"
+                },
+                {
+                  "$ref": "#/components/schemas/Awsv4SecretKeyEntry"
+                },
+                {
+                  "$ref": "#/components/schemas/Awsv4SessionTokenEntry"
+                },
+                {
+                  "$ref": "#/components/schemas/Awsv4AddToQueryEntry"
+                }
+              ]
+            },
+            "minimum": 3
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "awsv4"
+            ]
+          }
+        },
+        "required": [
+          "awsv4",
+          "type"
+        ]
+      },
+      "Awsv4ServiceEntry": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string",
+            "enum": [
+              "service"
+            ]
+          }
+        },
+        "required": [
+          "value",
+          "key"
+        ]
+      },
+      "Awsv4RegionEntry": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string",
+            "enum": [
+              "region"
+            ]
+          }
+        },
+        "required": [
+          "value",
+          "key"
+        ]
+      },
+      "Awsv4AccessKeyEntry": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string",
+            "enum": [
+              "accessKey"
+            ]
+          }
+        },
+        "required": [
+          "value",
+          "key"
+        ]
+      },
+      "Awsv4SecretKeyEntry": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string",
+            "enum": [
+              "secretKey"
+            ]
+          }
+        },
+        "required": [
+          "value",
+          "key"
+        ]
+      },
+      "Awsv4SessionTokenEntry": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string",
+            "enum": [
+              "sessionToken"
+            ]
+          }
+        },
+        "required": [
+          "value",
+          "key"
+        ]
+      },
+      "Awsv4AddToQueryEntry": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "boolean"
+          },
+          "key": {
+            "type": "string",
+            "enum": [
+              "addAuthDataToQuery"
+            ]
+          }
+        },
+        "required": [
+          "value",
+          "key"
+        ]
+      },
+      "NoAuthSource": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "noauth"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "UrlEncodedBodySource": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "urlencoded"
+            ]
+          },
+          "urlencoded": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/EntrySource"
@@ -483,24 +489,8 @@
           }
         },
         "required": [
-          "auth",
-          "body",
-          "url",
-          "method"
-        ]
-      },
-      "EmptyBodySource": {
-        "type": "object",
-        "properties": {
-          "mode": {
-            "type": "string",
-            "enum": [
-              "empty"
-            ]
-          }
-        },
-        "required": [
-          "mode"
+          "mode",
+          "urlencoded"
         ]
       },
       "EntrySource": {
@@ -516,20 +506,6 @@
         "required": [
           "key",
           "value"
-        ]
-      },
-      "FileBodySource": {
-        "type": "object",
-        "properties": {
-          "mode": {
-            "type": "string",
-            "enum": [
-              "file"
-            ]
-          }
-        },
-        "required": [
-          "mode"
         ]
       },
       "FormDataBodySource": {
@@ -576,39 +552,6 @@
           "type"
         ]
       },
-      "KeyValueApiKeyEntrySource": {
-        "type": "object",
-        "properties": {
-          "value": {
-            "type": "string"
-          },
-          "key": {
-            "type": "string",
-            "enum": [
-              "key",
-              "value"
-            ]
-          }
-        },
-        "required": [
-          "value",
-          "key"
-        ]
-      },
-      "NoAuthSource": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "enum": [
-              "noauth"
-            ]
-          }
-        },
-        "required": [
-          "type"
-        ]
-      },
       "RawBodySource": {
         "type": "object",
         "properties": {
@@ -638,6 +581,90 @@
           "language"
         ]
       },
+      "EmptyBodySource": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "empty"
+            ]
+          }
+        },
+        "required": [
+          "mode"
+        ]
+      },
+      "FileBodySource": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "file"
+            ]
+          }
+        },
+        "required": [
+          "mode"
+        ]
+      },
+      "ArgumentsMetadataDto": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "secure": {
+            "type": "boolean"
+          },
+          "type": {
+            "type": "string"
+          },
+          "typeSchema": {
+            "type": "object"
+          },
+          "typeObject": {
+            "type": "object"
+          },
+          "payload": {
+            "type": "boolean"
+          },
+          "variable": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "nullable": true
+          },
+          "removeIfNotPresentOnExecute": {
+            "type": "boolean"
+          },
+          "serialization": {
+            "$ref": "#/components/schemas/ArgumentSerializationDto"
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "ArgumentSerializationDto": {
+        "type": "object",
+        "properties": {
+          "style": {
+            "type": "string"
+          },
+          "explode": {
+            "type": "boolean"
+          }
+        }
+      },
       "ReturnTypeDto": {
         "type": "object",
         "properties": {
@@ -655,27 +682,6 @@
           "type",
           "schema",
           "statusCode"
-        ]
-      },
-      "UrlEncodedBodySource": {
-        "type": "object",
-        "properties": {
-          "mode": {
-            "type": "string",
-            "enum": [
-              "urlencoded"
-            ]
-          },
-          "urlencoded": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/EntrySource"
-            }
-          }
-        },
-        "required": [
-          "mode",
-          "urlencoded"
         ]
       }
     }

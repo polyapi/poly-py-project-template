@@ -154,7 +154,7 @@ public API base URLs.
 The [joke config](artefacts/vari/joke_api_config.json) is SECRET. Its `.inject()`
 reference must go unchanged into `getRandomJoke_async`; normal API execution
 resolves it, while the sample rejects direct API execution for this path.
-In the pinned SDK 0.3.21.dev1, generated Vari `update()` / `update_async()` methods
+In the pinned SDK 0.3.21, generated Vari `update()` / `update_async()` methods
 form-encode Python dictionaries, so use Canopy to preserve this Object value.
 
 The [advice config](artefacts/vari/advice_api_config.json) is OBSCURED and starts

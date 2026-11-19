@@ -3,5 +3,6 @@
   "subpath": "example-workflow",
   "description": "Starting point for a Canopy application.",
   "visibility": "ENVIRONMENT",
+  "publicAccess": false,
   "collections": []
 }

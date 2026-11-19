@@ -555,6 +555,7 @@ def test_raw_transport_applies_otp_and_refuses_redirects():
             "--apply",
         ],
         ["logs", "function-id"],
+        ["jobs", "run", "example_job"],
     ],
 )
 def test_every_remote_command_verifies_target_before_resource_requests(
@@ -797,3 +798,77 @@ def test_generate_only_can_export_recursive_contract_without_training(
         == model["schemas"]
     )
     generate.assert_not_called()
+
+
+JOBS = [
+    {"id": "job-1", "name": "example_job"},
+    {"id": "job-2", "name": "other_job"},
+]
+
+
+def job_client(trigger_response=None):
+    client = Mock()
+
+    def request(method, path, **kwargs):
+        if method == "GET" and path == "/jobs":
+            return copy.deepcopy(JOBS)
+        if method == "POST":
+            return trigger_response
+        raise AssertionError(f"Unexpected {method} {path}")
+
+    client.request.side_effect = request
+    return client
+
+
+def test_jobs_run_triggers_one_job_and_prints_its_run_id(training_cli, capsys):
+    client, generate = training_cli
+    queued = {"jobId": "job-1", "runId": "run-1", "queuedAt": "2026-11-19T00:00:00Z"}
+    client.request.side_effect = job_client(queued).request.side_effect
+    assert operations.main(["jobs", "run", "example_job"]) == 0
+    client.request.assert_any_call(
+        "POST", "/jobs/job-1/trigger", expected=(200, 201, 202)
+    )
+    output = capsys.readouterr().out
+    assert "runId run-1" in output
+    assert "example_job (job-1)" in output
+    generate.assert_not_called()
+
+
+def test_jobs_run_accepts_a_job_id(training_cli, capsys):
+    client, _ = training_cli
+    queued = {"jobId": "job-2", "runId": "run-2", "queuedAt": "now"}
+    client.request.side_effect = job_client(queued).request.side_effect
+    operations.main(["jobs", "run", "job-2"])
+    assert "runId run-2" in capsys.readouterr().out
+
+
+def test_jobs_run_dry_run_finds_the_job_without_running_it(training_cli, capsys):
+    client, _ = training_cli
+    client.request.side_effect = job_client().request.side_effect
+    operations.main(["jobs", "run", "example_job", "--dry-run"])
+    assert all(call.args[0] == "GET" for call in client.request.call_args_list)
+    assert "Would run job example_job" in capsys.readouterr().out
+
+
+def test_jobs_run_requires_exactly_one_match():
+    with pytest.raises(flow.DeployError, match="0 matches"):
+        operations.find_job(job_client(), "missing")
+
+
+def test_jobs_run_rejects_a_response_without_run_id():
+    with pytest.raises(flow.DeployError, match="runId"):
+        operations.run_job(job_client({"jobId": "job-1"}), JOBS[0])
+
+
+def test_jobs_run_without_a_name_needs_a_terminal(training_cli, monkeypatch):
+    monkeypatch.setattr(operations.sys.stdin, "isatty", lambda: False)
+    with pytest.raises(flow.DeployError, match="Job name is required"):
+        operations.main(["jobs", "run"])
+
+
+def test_flow_entry_point_routes_jobs_to_operations(monkeypatch):
+    called = Mock(return_value=0)
+    monkeypatch.setattr(operations, "main", called)
+    monkeypatch.setattr(flow.sys, "argv", ["flow.py", "jobs", "run", "example_job"])
+    assert flow.main() == 0
+    called.assert_called_once_with(["jobs", "run", "example_job"])

@@ -36,6 +36,7 @@ TARGETS = {
     "CreateJobDto": ("/jobs", "post"),
     "UpdateJobDto": ("/jobs/{id}", "patch"),
     "CreateServerCustomFunctionDto": ("/functions/server", "post"),
+    "UpdateServerCustomFunctionDto": ("/functions/server/{id}", "patch"),
     "CreateClientCustomFunctionDto": ("/functions/client", "post"),
     "CreateApiFunctionDto": ("/functions/api", "post"),
     "CreateAiFunctionV2Dto": ("/functions/ai", "post"),
@@ -184,6 +185,19 @@ def patch_platform_quirks(name: str, document: dict[str, Any]) -> None:
                 if item
                 not in {"sourceCode", "internalDependencies", "externalDependencies"}
             ]
+        if name == "UpdateServerCustomFunctionDto" and "required" in target:
+            # containerConcurrency is @IsOptional; the OpenAPI generator marks
+            # it required only because its TypeScript property lacks `?`.
+            target["required"] = [
+                item for item in target["required"] if item != "containerConcurrency"
+            ]
+            if not target["required"]:
+                target.pop("required")
+        if name == "UpdateServerCustomFunctionDto" and "containerConcurrency" in (
+            properties
+        ):
+            # null clears the override; the DTO accepts it through @IsOptional.
+            properties["containerConcurrency"] = {"type": ["number", "null"]}
         if name in {"CreateVariableDto", "UpdateVariableDto"} and "value" in properties:
             properties["value"] = True
         if (

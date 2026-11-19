@@ -3930,3 +3930,246 @@ def test_table_sync_revalidates_prepared_server_scopes_before_function_writes(
             )
         assert client.writes == []
         assert not state._path.exists()
+
+
+# --- Server function runtime settings (PolyAPI Release 35) --------------------
+
+
+class SettingsPlatform(FakePlatform):
+    """Record settings PATCHes, which never upload code."""
+
+    def __init__(self):
+        super().__init__()
+        self.patches = []
+
+    def request(self, method, path, **kwargs):
+        if method == "PATCH":
+            key = path.split("/")[-1]
+            self.patches.append((key, copy.deepcopy(kwargs["payload"])))
+            self.functions[key][1].update(kwargs["payload"])
+            return {"id": key}
+        return super().request(method, path, **kwargs)
+
+
+def set_worker_config(project, **settings):
+    path = project[5]["worker"]
+    source = path.read_text()
+    extra = "".join(f', "{key}": {value!r}' for key, value in settings.items())
+    path.write_text(
+        source.replace('"context": "example"}', '"context": "example"' + extra + "}")
+    )
+
+
+def settings_project(project):
+    config, args, logger, client, state, files = project
+    platform = SettingsPlatform()
+    platform.functions = client.functions
+    return (config, args, logger, platform, state, files)
+
+
+def worker_spec(project):
+    config, args, logger, *_ = project
+    specs = flow.load_function_specs(config, args, logger)
+    return next(item for item in specs if item.name == "worker")
+
+
+def sync_worker(project, **options):
+    config, args, logger, client, state, _ = project
+    stats = flow.ArtifactStats()
+    flow.sync_function_group(
+        specs=[worker_spec(project)],
+        client=client,
+        registry=flow.fetch_function_registry(client),
+        detail_cache={},
+        config=config,
+        cli_args=replace(args, dynamic=False, **options),
+        logger=logger,
+        stats=stats,
+        resume_state=state,
+    )
+    return stats
+
+
+def test_poly_config_reads_server_runtime_settings(project):
+    set_worker_config(project, server_side_async=True, container_concurrency=4)
+    spec = worker_spec(project)
+    assert spec.server_side_async is True
+    assert spec.container_concurrency == 4
+    assert spec.container_concurrency_explicit
+    payload = flow.build_function_payload(spec)
+    assert payload["serverSideAsync"] is True
+    # containerConcurrency is not part of the create contract.
+    assert "containerConcurrency" not in payload
+    flow.validate_endpoint_payload("CreateServerCustomFunctionDto", payload)
+    flow.validate_endpoint_payload(
+        "UpdateServerCustomFunctionDto", {"containerConcurrency": None}
+    )
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {"server_side_async": "yes"},
+        {"container_concurrency": -1},
+        {"container_concurrency": 2.5},
+        {"container_concurrency": True},
+    ],
+)
+def test_poly_config_rejects_invalid_runtime_settings(project, settings):
+    set_worker_config(project, **settings)
+    with pytest.raises(flow.DeployError):
+        worker_spec(project)
+
+
+def test_client_functions_reject_server_runtime_settings(project):
+    path = project[5]["helper"]
+    path.write_text(
+        path.read_text().replace(
+            '"context": "example"}', '"context": "example", "server_side_async": True}'
+        )
+    )
+    with pytest.raises(flow.DeployError, match="only to server functions"):
+        flow.load_function_specs(*project[:3])
+
+
+def test_manifest_reads_server_runtime_settings(tmp_path):
+    source = tmp_path / "worker.py"
+    source.write_text("def worker() -> bool:\n    return True\n")
+    manifest = tmp_path / "functions.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "functions": [
+                    {
+                        "type": "server",
+                        "name": "worker",
+                        "context": "example",
+                        "file": "worker.py",
+                        "serverSideAsync": False,
+                        "containerConcurrency": None,
+                    }
+                ]
+            }
+        )
+    )
+    (spec,) = flow.load_function_specs_from_manifest(manifest)
+    assert spec.server_side_async is False
+    assert spec.container_concurrency is None
+    assert spec.container_concurrency_explicit
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_container_concurrency_only_change_patches_without_code_upload(
+    project, dry_run
+):
+    project = settings_project(project)
+    client = project[3]
+    set_worker_config(project, container_concurrency=4)
+    stats = sync_worker(project, dry_run=dry_run)
+    assert stats.updated == 1 and stats.failed == 0
+    assert client.writes == []
+    if dry_run:
+        assert client.patches == []
+    else:
+        assert client.patches == [("example.worker", {"containerConcurrency": 4})]
+        # A second push finds the setting applied and skips.
+        assert sync_worker(project).skipped == 1
+        assert len(client.patches) == 1
+
+
+def test_server_side_async_only_change_patches_without_code_upload(project):
+    project = settings_project(project)
+    client = project[3]
+    set_worker_config(project, server_side_async=True)
+    stats = sync_worker(project)
+    assert stats.updated == 1
+    assert client.writes == []
+    assert client.patches == [("example.worker", {"serverSideAsync": True})]
+
+
+def test_disabled_server_side_async_matches_unreported_remote(project):
+    project = settings_project(project)
+    set_worker_config(project, server_side_async=False)
+    assert sync_worker(project).skipped == 1
+    assert project[3].patches == []
+
+
+def test_code_change_redeploys_then_applies_container_concurrency(project):
+    project = settings_project(project)
+    client = project[3]
+    set_worker_config(project, container_concurrency=2)
+    path = project[5]["worker"]
+    path.write_text(path.read_text().replace("return True", "return False"))
+    stats = sync_worker(project)
+    assert stats.updated == 1
+    assert client.writes == ["example.worker"]
+    assert client.patches == [("example.worker", {"containerConcurrency": 2})]
+
+
+def test_code_change_reapplies_matching_container_concurrency(project):
+    # A code deploy drops the Knative override while the stored value survives.
+    project = settings_project(project)
+    client = project[3]
+    client.functions["example.worker"][1]["containerConcurrency"] = 2
+    set_worker_config(project, container_concurrency=2)
+    path = project[5]["worker"]
+    path.write_text(path.read_text().replace("return True", "return False"))
+    stats = sync_worker(project)
+    assert stats.updated == 1
+    assert client.writes == ["example.worker"]
+    assert client.patches == [("example.worker", {"containerConcurrency": 2})]
+
+
+def test_forced_push_redeploys_instead_of_settings_patch(project):
+    project = settings_project(project)
+    client = project[3]
+    set_worker_config(project, server_side_async=True)
+    sync_worker(project, force=True)
+    assert client.writes == ["example.worker"]
+    assert client.patches == []
+
+
+def test_new_function_applies_container_concurrency_after_create(project):
+    project = settings_project(project)
+    client = project[3]
+    del client.functions["example.worker"]
+    set_worker_config(project, container_concurrency=3)
+    stats = sync_worker(project)
+    assert stats.created == 1
+    assert client.patches == [("example.worker", {"containerConcurrency": 3})]
+
+
+def test_dynamic_plan_applies_settings_only_changes_without_deploying(project):
+    project = settings_project(project)
+    client = project[3]
+    client.functions["example.helper"][1]["code"] = client.functions["example.helper"][
+        1
+    ]["code"].replace("return False", "return True")
+    set_worker_config(project, container_concurrency=6)
+    prepared = plan(project)
+    assert prepared.order == []
+    assert prepared.settings == {"example.worker": {"containerConcurrency": 6}}
+    summary = execute(project, prepared)
+    assert client.writes == []
+    assert client.patches == [("example.worker", {"containerConcurrency": 6})]
+    assert summary.functions.updated == 1
+
+
+def test_code_comparison_ignores_only_poly_config_runtime_settings():
+    base = (
+        "from polyapi.typedefs import PolyServerFunction\n"
+        "# é\n"
+        'polyConfig: PolyServerFunction = {\n    "name": "w",\n    "context": "example",\n}\n'
+        "def w() -> bool:\n    return True\n"
+    )
+    with_settings = base.replace(
+        '"context": "example",\n',
+        '"context": "example",\n    "container_concurrency": 4,\n'
+        '    "server_side_async": True,\n',
+    )
+    renamed = base.replace('"name": "w"', '"name": "x"')
+    strip = flow.code_without_runtime_settings
+    assert strip(base) == strip(with_settings)
+    assert strip(base) != strip(renamed)
+    assert strip(base.replace("return True", "return False")) != strip(with_settings)
+    assert strip("def broken(:\n") == "def broken(:\n"

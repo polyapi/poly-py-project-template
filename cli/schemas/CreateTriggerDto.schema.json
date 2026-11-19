@@ -31,16 +31,16 @@
           "destination"
         ]
       },
-      "TriggerDestination": {
+      "TriggerSource": {
         "type": "object",
         "properties": {
-          "serverFunctionId": {
+          "webhookHandleId": {
             "type": "string"
+          },
+          "errorHandler": {
+            "$ref": "#/components/schemas/TriggerErrorHandler"
           }
-        },
-        "required": [
-          "serverFunctionId"
-        ]
+        }
       },
       "TriggerErrorHandler": {
         "type": "object",
@@ -71,16 +71,16 @@
           "path"
         ]
       },
-      "TriggerSource": {
+      "TriggerDestination": {
         "type": "object",
         "properties": {
-          "webhookHandleId": {
+          "serverFunctionId": {
             "type": "string"
-          },
-          "errorHandler": {
-            "$ref": "#/components/schemas/TriggerErrorHandler"
           }
-        }
+        },
+        "required": [
+          "serverFunctionId"
+        ]
       }
     }
   }

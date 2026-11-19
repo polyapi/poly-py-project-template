@@ -24,31 +24,31 @@
             "type": "boolean"
           },
           "secrecy": {
+            "type": "string",
             "enum": [
               "SECRET",
               "OBSCURED",
               "PARTIAL",
               "NONE"
-            ],
-            "type": "string"
+            ]
           },
           "visibility": {
+            "type": "string",
             "enum": [
               "ENVIRONMENT",
               "TENANT",
               "PUBLIC"
-            ],
-            "type": "string"
+            ]
           },
           "state": {
+            "type": "string",
             "enum": [
               "ALPHA",
               "BETA",
               "STABLE",
               "DEPRECATED",
               "DISABLED"
-            ],
-            "type": "string"
+            ]
           },
           "ownerUserId": {
             "type": "string"

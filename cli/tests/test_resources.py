@@ -69,6 +69,27 @@ def subscription(**overrides):
     }
 
 
+def subscription_detail(**overrides):
+    return {
+        "id": "old",
+        "name": "events",
+        "context": "example.demo",
+        "type": "CUSTOM",
+        "transportProtocol": "WS",
+        "websocketUrl": "wss://example.invalid/events",
+        "query": "subscription { event }",
+        "functionId": "handler",
+        "functionParams": None,
+        "enabled": False,
+        "description": None,
+        "visibility": "ENVIRONMENT",
+        "ohipMaintainOffset": False,
+        "eventInactivityThresholdMs": None,
+        "paramsObject": None,
+        **overrides,
+    }
+
+
 def subscription_client(records=None):
     return FakeClient(
         {
@@ -525,6 +546,11 @@ def test_subscription_recreation_requires_force_and_confirmation(
     client = subscription_client(
         [{"id": "old", "name": "events", "context": "example.demo"}]
     )
+    # A structural change (the query) cannot be patched in place.
+    client.responses["/subscriptions/graphql/old"] = {
+        **subscription_detail(),
+        "query": "subscription { other }",
+    }
     confirm = Mock(return_value=confirmed)
     sleep = Mock()
     monkeypatch.setattr(flow, "confirm_subscription_recreate", confirm)
@@ -1800,3 +1826,771 @@ def test_mcp_servers_are_never_orphans(settings):
     )
     assert [call[0] for call in client.writes] == ["POST"]
     assert not summary.orphans
+
+
+# --- PolyAPI Release 35 -------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "value, seconds",
+    [
+        (5, 300),
+        ("5", 300),
+        ("10s", 10),
+        ("90 s", 90),
+        ("30m", 1800),
+        ("2H", 7200),
+        (" 60s ", 60),
+    ],
+)
+def test_job_interval_values_match_the_platform_parser(value, seconds):
+    assert flow.job_interval_seconds(value) == seconds
+
+
+@pytest.mark.parametrize("value", ["abc", "5d", "1.5", 1.5, True, None, "-5", 0, ""])
+def test_invalid_job_interval_values_are_rejected(tmp_path, value):
+    assert flow.job_interval_seconds(value) is None
+    payload = {"name": "job", "schedule": {"type": "interval", "value": value}}
+    with pytest.raises(flow.DeployError, match="invalid interval"):
+        flow.validate_job_schedule(payload, tmp_path / "job.json")
+
+
+def test_job_interval_under_ten_seconds_fails_locally(tmp_path):
+    registry = flow.FunctionRegistry()
+    registry.upsert("server", {"id": "fn", "context": "example.demo", "name": "run"})
+    data = {
+        "name": "job",
+        "schedule": {"type": "interval", "value": "5s"},
+        "functions": [{"functionContext": "example.demo", "functionName": "run"}],
+    }
+    with pytest.raises(flow.DeployError, match="minimum is 10 seconds"):
+        flow.build_job_payload(tmp_path / "job.json", data, registry)
+    data["schedule"]["value"] = "10s"
+    payload = flow.build_job_payload(tmp_path / "job.json", data, registry)
+    assert payload["schedule"]["value"] == "10s"
+    flow.validate_endpoint_payload(
+        "CreateJobDto", {**payload, "enabled": False, "executionType": "sequential"}
+    )
+
+
+@pytest.mark.parametrize(
+    "local, remote, same",
+    [
+        ("60s", 1, True),
+        ("1m", 1, True),
+        ("1", 1, True),
+        ("90s", "90s", True),
+        ("2m", 1, False),
+        ("10s", "15s", False),
+    ],
+)
+def test_job_interval_drift_compares_seconds(local, remote, same):
+    local_payload = {"schedule": {"type": "interval", "value": local}}
+    remote_payload = {"schedule": {"type": "interval", "value": remote}}
+    left, right = flow.normalize_job_subset(local_payload, remote_payload)
+    assert (left == right) is same
+
+
+def test_periodical_job_schedule_is_not_reinterpreted():
+    local = {"schedule": {"type": "periodical", "value": "*/5 * * * *"}}
+    left, right = flow.normalize_job_subset(local, copy.deepcopy(local))
+    assert left == right == {"schedule": {"type": "periodical", "value": "*/5 * * * *"}}
+
+
+def webhook_registry():
+    registry = flow.FunctionRegistry()
+    registry.upsert(
+        "server", {"id": "handler-id", "context": "example.demo", "name": "handler"}
+    )
+    return registry
+
+
+def webhook_data(**overrides):
+    return {
+        "name": "hook",
+        "context": "example.demo",
+        "description": "Hook",
+        "subpath": "hook",
+        "method": "POST",
+        **overrides,
+    }
+
+
+def test_webhook_server_function_resolves_and_null_disconnects(tmp_path):
+    path = tmp_path / "hook.json"
+    reference = {"functionContext": "example.demo", "functionName": "handler"}
+    payload = flow.build_webhook_payload(
+        path, webhook_data(serverFunction=reference), webhook_registry()
+    )
+    assert payload["serverFunctionId"] == "handler-id"
+    assert "serverFunction" not in payload
+    flow.validate_endpoint_payload("CreateWebhookHandleDto", payload)
+    payload = flow.build_webhook_payload(
+        path, webhook_data(serverFunction=None), webhook_registry()
+    )
+    assert payload["serverFunctionId"] is None
+    flow.validate_endpoint_payload("UpdateWebhookHandleDto", payload)
+    assert "serverFunctionId" not in flow.build_webhook_payload(
+        path, webhook_data(), webhook_registry()
+    )
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        webhook_data(serverFunctionId="raw-id"),
+        webhook_data(serverFunction="{{example.demo.handler}}"),
+        webhook_data(serverFunction={"functionName": "handler"}),
+        webhook_data(serverFunction={"functionContext": "example.demo"}),
+    ],
+)
+def test_webhook_server_function_requires_portable_reference(tmp_path, data):
+    with pytest.raises(flow.DeployError, match="serverFunction"):
+        flow.build_webhook_payload(tmp_path / "hook.json", data, webhook_registry())
+
+
+def test_webhook_server_function_preflight_and_contexts(settings):
+    config, *_ = settings
+    data = webhook_data(
+        serverFunction={"functionContext": "shared.tools", "functionName": "run"}
+    )
+    path = artefact(config, "webhooks", data)
+    flow.validate_local_artifact("webhooks", path, data, config)
+    assert flow.webhook_contexts_from_raw(data) == {"example.demo", "shared.tools"}
+
+
+def sync_webhook(settings, data, remote=None, *, triggers=(), dry_run=False):
+    config, args, logger, summary = settings
+    artefact(config, "webhooks", data)
+    for index, trigger in enumerate(triggers):
+        artefact(config, "triggers", trigger, name=f"trigger{index}")
+    responses = {"/webhooks": [remote] if remote else []}
+    if remote:
+        responses[f"/webhooks/{remote['id']}"] = remote
+    client = FakeClient(responses)
+    warnings = Mock()
+    logger.warn = warnings
+    flow.sync_webhooks(
+        client=client,
+        config=replace(config, use_mtime_guard=False),
+        cli_args=replace(args, dry_run=dry_run),
+        logger=logger,
+        summary=summary,
+        function_registry=webhook_registry(),
+        resume_state=flow.ResumeState(config.repo_root, False),
+    )
+    return client, warnings, summary
+
+
+def test_webhook_server_function_change_reaches_update(settings):
+    reference = {"functionContext": "example.demo", "functionName": "handler"}
+    remote = {
+        **webhook_data(),
+        "id": "hook-id",
+        "slug": None,
+        "serverFunctionId": None,
+    }
+    client, _, summary = sync_webhook(
+        settings, webhook_data(serverFunction=reference), remote
+    )
+    assert client.writes[0][:2] == ("PATCH", "/webhooks/hook-id")
+    assert client.writes[0][2]["payload"]["serverFunctionId"] == "handler-id"
+    remote["serverFunctionId"] = "handler-id"
+    client, _, summary = sync_webhook(
+        settings, webhook_data(serverFunction=reference), remote
+    )
+    assert not client.writes
+    client, _, _ = sync_webhook(settings, webhook_data(serverFunction=None), remote)
+    assert client.writes[0][2]["payload"]["serverFunctionId"] is None
+
+
+def test_webhook_and_trigger_to_the_same_function_warn_of_double_execution(
+    settings,
+):
+    reference = {"functionContext": "example.demo", "functionName": "handler"}
+    trigger = {
+        "name": "example_hook",
+        "source": {"webhookContext": "example.demo", "webhookName": "hook"},
+        "destination": reference,
+    }
+    _, warnings, _ = sync_webhook(
+        settings,
+        webhook_data(serverFunction=reference),
+        triggers=[trigger],
+        dry_run=True,
+    )
+    assert any("twice" in str(call) for call in warnings.call_args_list)
+
+
+def test_webhook_and_trigger_to_different_functions_do_not_warn(settings):
+    trigger = {
+        "source": {"webhookContext": "example.demo", "webhookName": "hook"},
+        "destination": {"functionContext": "example.demo", "functionName": "other"},
+    }
+    _, warnings, _ = sync_webhook(
+        settings,
+        webhook_data(
+            serverFunction={
+                "functionContext": "example.demo",
+                "functionName": "handler",
+            }
+        ),
+        triggers=[trigger],
+        dry_run=True,
+    )
+    assert not any("twice" in str(call) for call in warnings.call_args_list)
+
+
+def test_adopted_webhook_keeps_its_server_function_portable():
+    document = flow.build_local_webhook_document(
+        {**webhook_data(), "serverFunctionId": "handler-id"}, webhook_registry()
+    )
+    assert document["serverFunction"] == {
+        "functionContext": "example.demo",
+        "functionName": "handler",
+    }
+
+
+def existing_subscription_client(detail):
+    client = subscription_client(
+        [{"id": "old", "name": "events", "context": "example.demo"}]
+    )
+    client.responses["/subscriptions/graphql/old"] = detail
+    return client
+
+
+def test_unchanged_subscription_is_skipped(settings):
+    config, args, logger, summary = settings
+    artefact(config, "subscriptions", subscription())
+    client = existing_subscription_client(subscription_detail())
+    flow.sync_subscriptions(client, config, args, logger, summary)
+    assert not client.writes
+    assert summary.subscriptions.skipped == 1
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_non_structural_subscription_changes_patch_in_place(
+    settings, monkeypatch, dry_run
+):
+    config, args, logger, summary = settings
+    artefact(
+        config,
+        "subscriptions",
+        subscription(
+            enabled=True,
+            description="Events",
+            functionParams={"mode": "fast"},
+            eventInactivityThresholdMs=120000,
+            ohipMaintainOffset=False,
+        ),
+    )
+    client = existing_subscription_client(subscription_detail())
+    confirm = Mock()
+    monkeypatch.setattr(flow, "confirm_subscription_recreate", confirm)
+    flow.sync_subscriptions(
+        client, config, replace(args, dry_run=dry_run), logger, summary
+    )
+    confirm.assert_not_called()
+    assert summary.subscriptions.updated == 1
+    if dry_run:
+        assert not client.writes
+    else:
+        assert client.writes == [
+            (
+                "PATCH",
+                "/subscriptions/graphql/old",
+                {
+                    "payload": {
+                        "description": "Events",
+                        "enabled": True,
+                        "eventInactivityThresholdMs": 120000,
+                        "functionParams": {"mode": "fast"},
+                    }
+                },
+            )
+        ]
+
+
+def test_destination_change_still_requires_confirmed_recreation(settings):
+    config, args, logger, summary = settings
+    artefact(config, "subscriptions", subscription(enabled=True))
+    client = existing_subscription_client(subscription_detail(functionId="previous"))
+    flow.sync_subscriptions(client, config, args, logger, summary)
+    assert not client.writes
+    assert summary.subscriptions.blocked == 1
+
+
+def test_forced_subscription_without_structural_change_patches_params(settings):
+    config, args, logger, summary = settings
+    data = subscription(
+        paramsObject={
+            "token": {
+                "type": "PolyVariable",
+                "variableName": "token",
+                "variableContext": "example.demo",
+            }
+        }
+    )
+    artefact(config, "subscriptions", data)
+    client = existing_subscription_client(subscription_detail())
+    flow.sync_subscriptions(client, config, replace(args, force=True), logger, summary)
+    method, path, options = client.writes[0]
+    assert (method, path) == ("PATCH", "/subscriptions/graphql/old")
+    assert options["payload"]["paramsObject"] == {
+        "token": {"type": "PolyVariable", "id": "secret"}
+    }
+    assert options["payload"]["enabled"] is False
+    assert len(client.writes) == 1
+
+
+def test_subscription_offset_selection_is_never_patched():
+    payload = {"type": "OHIP", "ohipOffsetSelection": "SPECIFIC", "ohipOffset": "1"}
+    structural, changes = flow.plan_subscription_update(
+        payload, subscription_detail(type="OHIP"), force=True
+    )
+    assert structural == []
+    assert changes == {}
+
+
+def test_ai_twilio_token_variable_resolves_secret_and_null(settings):
+    config, *_ = settings
+    variables = [
+        {
+            "id": "twilio",
+            "name": "twilio",
+            "context": "example.demo",
+            "secrecy": "SECRET",
+        }
+    ]
+    reference = {"variableName": "twilio", "variableContext": "example.demo"}
+    payload = flow.resolve_ai_payload(
+        ai_function(
+            type="VOICE", twilioAuthTokenVariable=reference, voiceInitialMessage=None
+        ),
+        [],
+        variables,
+        config,
+    )
+    assert payload["twilioAuthTokenVariableId"] == "twilio"
+    assert payload["voiceInitialMessage"] is None
+    assert "twilioAuthTokenVariable" not in payload
+    payload = flow.resolve_ai_payload(
+        ai_function(twilioAuthTokenVariable=None), [], variables, config
+    )
+    assert payload["twilioAuthTokenVariableId"] is None
+    flow.validate_endpoint_payload(
+        "UpdateAiFunctionV2Dto",
+        {"twilioAuthTokenVariableId": None, "voiceInitialMessage": None},
+    )
+
+
+@pytest.mark.parametrize(
+    "token, variables, message",
+    [
+        (
+            {"variableName": "twilio", "variableContext": "example.demo"},
+            [
+                {
+                    "id": "v",
+                    "name": "twilio",
+                    "context": "example.demo",
+                    "secrecy": "NONE",
+                }
+            ],
+            "SECRET",
+        ),
+        ({"name": "twilio", "context": "example.demo"}, [], "variableName"),
+        ("twilio-id", [], "variableName"),
+    ],
+)
+def test_ai_twilio_token_variable_rejects_invalid_references(
+    settings, token, variables, message
+):
+    config, *_ = settings
+    with pytest.raises(flow.DeployError, match=message):
+        flow.resolve_ai_payload(
+            ai_function(type="VOICE", twilioAuthTokenVariable=token),
+            [],
+            variables,
+            config,
+        )
+
+
+def test_ai_twilio_token_variable_requires_a_voice_function(settings):
+    config, *_ = settings
+    reference = {"variableName": "twilio", "variableContext": "example.demo"}
+    with pytest.raises(flow.DeployError, match="VOICE"):
+        flow.resolve_ai_payload(
+            ai_function(type="TEXT", twilioAuthTokenVariable=reference), [], [], config
+        )
+
+
+def test_ai_twilio_token_accepts_legacy_secret_flag(settings):
+    config, *_ = settings
+    reference = {"variableName": "twilio", "variableContext": "example.demo"}
+    for secret, valid in ((True, True), (False, False)):
+        variables = [
+            {"id": "v", "name": "twilio", "context": "example.demo", "secret": secret}
+        ]
+        data = ai_function(type="VOICE", twilioAuthTokenVariable=reference)
+        if valid:
+            flow.resolve_ai_payload(data, [], variables, config)
+        else:
+            with pytest.raises(flow.DeployError, match="SECRET"):
+                flow.resolve_ai_payload(data, [], variables, config)
+
+
+OUTPUT_SCHEMA = {"type": "object", "properties": {"answer": {"type": "string"}}}
+ERROR_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "status": {"const": "failed"},
+        "message": {"type": "string"},
+    },
+    "required": ["status", "message"],
+}
+
+
+def test_ai_error_schema_matching_the_platform_rule_is_accepted(settings):
+    config, *_ = settings
+    flow.resolve_ai_payload(
+        ai_function(outputSchema=OUTPUT_SCHEMA, errorSchema=ERROR_SCHEMA),
+        [],
+        [],
+        config,
+    )
+    enum_status = copy.deepcopy(ERROR_SCHEMA)
+    enum_status["properties"]["status"] = {"enum": ["failed"]}
+    flow.resolve_ai_payload(
+        ai_function(outputSchema=OUTPUT_SCHEMA, errorSchema=enum_status), [], [], config
+    )
+
+
+@pytest.mark.parametrize(
+    "output, change, message",
+    [
+        (None, {}, "requires outputSchema"),
+        (OUTPUT_SCHEMA, {"required": ["message"]}, "status"),
+        (OUTPUT_SCHEMA, {"properties": {"message": {"type": "string"}}}, "status"),
+        (OUTPUT_SCHEMA, {"required": ["status"]}, "message"),
+        (
+            OUTPUT_SCHEMA,
+            {
+                "properties": {
+                    "status": {"const": "failed"},
+                    "message": {"type": "number"},
+                }
+            },
+            "message",
+        ),
+    ],
+)
+def test_ai_error_schema_rule_fails_locally(settings, output, change, message):
+    config, *_ = settings
+    schema = {**copy.deepcopy(ERROR_SCHEMA), **change}
+    with pytest.raises(flow.DeployError, match=message):
+        flow.resolve_ai_payload(
+            ai_function(outputSchema=output, errorSchema=schema), [], [], config
+        )
+
+
+def test_ai_raw_twilio_token_id_is_not_portable(settings):
+    config, *_ = settings
+    with pytest.raises(flow.DeployError, match="portable"):
+        flow.resolve_ai_payload(
+            ai_function(twilioAuthTokenVariableId="raw"), [], [], config
+        )
+
+
+def test_ai_twilio_token_preflight_uses_placeholder_reference(settings):
+    config, *_ = settings
+    data = ai_function(
+        type="VOICE",
+        twilioAuthTokenVariable={
+            "variableName": "twilio",
+            "variableContext": "example.demo",
+        },
+    )
+    path = artefact(config, "ai-functions", data)
+    flow.validate_local_artifact("ai-functions", path, data, config)
+
+
+@pytest.mark.parametrize(
+    "schema",
+    [
+        {"type": "object", "properties": {"answer": {"type": "string"}}},
+        {"properties": {"answer": {"type": "string"}}},
+        {
+            "$ref": "#/definitions/Answer",
+            "definitions": {"Answer": {"type": "object", "properties": {}}},
+        },
+        None,
+    ],
+)
+def test_ai_output_schema_with_object_root_is_accepted(settings, schema):
+    config, *_ = settings
+    flow.resolve_ai_payload(ai_function(outputSchema=schema), [], [], config)
+
+
+@pytest.mark.parametrize("key", ["outputSchema", "errorSchema"])
+@pytest.mark.parametrize(
+    "schema",
+    [
+        {"type": "array", "items": {"type": "string"}},
+        {"type": "string"},
+        {"anyOf": [{"type": "object"}, {"type": "string"}]},
+        {"enum": ["a", "b"]},
+        {"$ref": "#/$defs/Items", "$defs": {"Items": {"type": "array"}}},
+        ["not", "a", "schema"],
+    ],
+)
+def test_ai_schema_without_object_root_fails_locally(settings, key, schema):
+    config, *_ = settings
+    data = ai_function(**{key: schema})
+    if key == "errorSchema":
+        data["outputSchema"] = OUTPUT_SCHEMA
+    with pytest.raises(flow.DeployError, match=f"{key} must describe an object"):
+        flow.resolve_ai_payload(data, [], [], config)
+
+
+def mcp_widget_server(widget):
+    return {
+        "name": "tools",
+        "toolFunctions": [
+            {
+                "functionName": "lookup",
+                "functionContext": "example.demo",
+                "widget": widget,
+            }
+        ],
+    }
+
+
+def test_mcp_widget_settings_resolve_to_variable_ids(settings):
+    config, *_ = settings
+    functions = [{"id": "lookup", "name": "lookup", "context": "example.demo"}]
+    variables = [{"id": "theme-id", "name": "theme", "context": "example.demo"}]
+    data = mcp_widget_server(
+        {
+            "enabled": True,
+            "settings": [
+                {
+                    "key": "theme",
+                    "variable": {
+                        "variableName": "theme",
+                        "variableContext": "example.demo",
+                    },
+                }
+            ],
+        }
+    )
+    payload = flow.resolve_mcp_payload(data, functions, variables, config)
+    assert payload["toolFunctions"][0]["widget"] == {
+        "enabled": True,
+        "settings": [{"key": "theme", "variableId": "theme-id"}],
+    }
+    disabled = flow.resolve_mcp_payload(
+        mcp_widget_server({"enabled": False}), functions, variables, config
+    )
+    assert disabled["toolFunctions"][0]["widget"] == {"enabled": False}
+    assert flow.mcp_variable_references(data) == [
+        {"variableName": "theme", "variableContext": "example.demo"}
+    ]
+
+
+@pytest.mark.parametrize(
+    "widget",
+    [
+        {"settings": []},
+        {"enabled": "yes"},
+        {"enabled": True, "settings": {}},
+        {"enabled": True, "settings": [{"key": "theme", "variableId": "raw"}]},
+        {"enabled": True, "settings": [{"key": "theme", "variable": {"name": "x"}}]},
+        {"enabled": True, "extra": 1},
+        {
+            "enabled": True,
+            "settings": [
+                {
+                    "key": "theme",
+                    "variable": {
+                        "variableName": "theme",
+                        "variableContext": "example.demo",
+                    },
+                },
+                {
+                    "key": "theme",
+                    "variable": {
+                        "variableName": "theme",
+                        "variableContext": "example.demo",
+                    },
+                },
+            ],
+        },
+    ],
+)
+def test_mcp_widget_rejects_invalid_shapes(settings, widget):
+    config, *_ = settings
+    functions = [{"id": "lookup", "name": "lookup", "context": "example.demo"}]
+    variables = [{"id": "theme-id", "name": "theme", "context": "example.demo"}]
+    with pytest.raises(flow.DeployError, match="widget"):
+        flow.resolve_mcp_payload(
+            mcp_widget_server(widget), functions, variables, config
+        )
+
+
+def test_mcp_widget_variables_must_be_namespace_owned(settings):
+    config, args, logger, _ = settings
+    artefact(
+        config,
+        "mcp-servers",
+        mcp_widget_server(
+            {
+                "enabled": True,
+                "settings": [
+                    {
+                        "key": "theme",
+                        "variable": {
+                            "variableName": "theme",
+                            "variableContext": "other.demo",
+                        },
+                    }
+                ],
+            }
+        ),
+    )
+    with pytest.raises(flow.DeployError):
+        flow.validate_local_namespace(config, args, logger)
+
+
+def canopy_public(**overrides):
+    return {
+        "name": "Demo",
+        "subpath": "example-demo",
+        "visibility": "PUBLIC",
+        "publicAccess": True,
+        "collections": [],
+        **overrides,
+    }
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        canopy_public(visibility="ENVIRONMENT"),
+        {key: value for key, value in canopy_public().items() if key != "visibility"},
+        canopy_public(publicAccess="true"),
+    ],
+)
+def test_canopy_public_access_requires_public_visibility(settings, data):
+    config, *_ = settings
+    with pytest.raises(flow.DeployError, match="publicAccess"):
+        flow.validate_canopy(data, config)
+
+
+def canopy_client(remote_config, visibility="PUBLIC"):
+    return FakeClient(
+        {
+            "/applications": [
+                {
+                    "id": "app",
+                    "name": "Demo",
+                    "subpath": "example-demo",
+                    "visibility": visibility,
+                }
+            ],
+            "/applications/app/config": remote_config,
+        }
+    )
+
+
+def test_canopy_newly_enabling_public_access_is_skipped_without_a_terminal(
+    settings, monkeypatch
+):
+    config, args, logger, summary = settings
+    artefact(config, "canopy", canopy_public())
+    client = canopy_client(
+        {"name": "Demo", "subpath": "example-demo", "collections": []}
+    )
+    monkeypatch.setattr(flow.sys.stdin, "isatty", lambda: False)
+    prompt = Mock()
+    monkeypatch.setattr("builtins.input", prompt)
+    flow.sync_canopy(client, config, args, logger, summary)
+    prompt.assert_not_called()
+    assert not client.writes
+    assert summary.canopy.blocked == 1
+
+
+@pytest.mark.parametrize("answer, writes", [("y", 1), ("", 0), ("no", 0)])
+def test_canopy_newly_enabling_public_access_asks_first(
+    settings, monkeypatch, answer, writes
+):
+    config, args, logger, summary = settings
+    artefact(config, "canopy", canopy_public())
+    client = canopy_client(
+        {"name": "Demo", "subpath": "example-demo", "collections": []}
+    )
+    monkeypatch.setattr(flow.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(flow.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", Mock(return_value=answer))
+    flow.sync_canopy(client, config, args, logger, summary)
+    assert len(client.writes) == writes
+    if writes:
+        assert client.writes[0][:2] == ("PUT", "/applications/app/config")
+        assert client.writes[0][2]["payload"]["publicAccess"] is True
+
+
+def test_canopy_public_access_already_enabled_needs_no_prompt(settings, monkeypatch):
+    config, args, logger, summary = settings
+    artefact(config, "canopy", canopy_public(icon="new"))
+    client = canopy_client(
+        {
+            "name": "Demo",
+            "subpath": "example-demo",
+            "collections": [],
+            "publicAccess": True,
+        }
+    )
+    prompt = Mock()
+    monkeypatch.setattr("builtins.input", prompt)
+    flow.sync_canopy(client, config, args, logger, summary)
+    prompt.assert_not_called()
+    assert client.writes[0][:2] == ("PUT", "/applications/app/config")
+
+
+def test_canopy_public_access_on_a_non_public_application_fails(settings):
+    config, args, logger, summary = settings
+    artefact(config, "canopy", canopy_public())
+    client = canopy_client({"collections": []}, visibility="ENVIRONMENT")
+    with pytest.raises(flow.DeployError, match="PUBLIC application"):
+        flow.sync_canopy(client, config, args, logger, summary)
+    assert not client.writes
+
+
+def test_canopy_public_access_dry_run_warns_without_prompting(settings, monkeypatch):
+    config, args, logger, summary = settings
+    artefact(config, "canopy", canopy_public())
+    client = FakeClient({"/applications": []})
+    prompt = Mock()
+    monkeypatch.setattr("builtins.input", prompt)
+    flow.sync_canopy(client, config, replace(args, dry_run=True), logger, summary)
+    prompt.assert_not_called()
+    assert not client.writes
+    assert summary.canopy.created == 1
+
+
+@pytest.mark.parametrize("pattern", ["example.*", "example.**"])
+def test_generate_context_patterns_pass_through(settings, pattern):
+    config, args, logger, _ = settings
+    config = replace(config, generate_contexts=(pattern,))
+    assert flow.resolve_poly_generate_contexts(config, args, logger) == (pattern,)
+
+
+def test_generate_context_patterns_cannot_bypass_excluded_contexts(settings):
+    config, args, logger, _ = settings
+    config = replace(
+        config,
+        generate_contexts=("example.**",),
+        orphan_excluded_contexts=("example.private",),
+    )
+    with pytest.raises(flow.DeployError, match="patterns"):
+        flow.resolve_poly_generate_contexts(config, args, logger)

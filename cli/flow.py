@@ -840,6 +840,13 @@ UUID_PATTERN = re.compile(
 FUNCTION_REF_PATTERN = re.compile(r"^\{\{(?P<context>.+)\.(?P<name>[^.]+)\}\}$")
 ENV_TOKEN_PATTERN = re.compile(r"\{\{(?P<name>[A-Za-z_][A-Za-z0-9_]*)\}\}")
 ENV_ALERT_PATTERN = re.compile(r"\{\{(?P<name>[A-Z_][A-Z0-9_]*)\}\}")
+# Job interval values follow the platform's parser: digits mean minutes, and a
+# <digits><s|m|h> string is a duration. Ten seconds is the platform minimum.
+JOB_INTERVAL_MINUTES_PATTERN = re.compile(r"[0-9]+")
+JOB_INTERVAL_DURATION_PATTERN = re.compile(r"([0-9]+)\s*([smh])", re.IGNORECASE)
+JOB_INTERVAL_UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600}
+JOB_INTERVAL_MIN_SECONDS = 10
+JOB_INTERVAL_MAX_SECONDS = 2_147_483_647
 WEBHOOK_TEMPLATE_TOKEN_PATTERN = re.compile(r"\{\{[^{}]+\}\}|\{[^{}]+\}")
 FLOW_LOGO = r"""
 __/\\\\\\\\\\\\\\\__/\\\___________________/\\\\\_______/\\\______________/\\\_
@@ -897,6 +904,7 @@ ROOT_HELP_EPILOG = textwrap.dedent("""
       python cli/flow.py train-openapi --help
       python cli/flow.py train-model --help
       python cli/flow.py delete-content --help
+      python cli/flow.py jobs run example_motd
       python cli/flow.py self-update --check
       python cli/flow.py skills add python
       python cli/flow.py skills update
@@ -1005,6 +1013,9 @@ class FunctionSpec:
     generate_contexts: tuple[str, ...] = ()
     execution_api_key: str | None = None
     line_number: int | None = None
+    server_side_async: bool | None = None
+    container_concurrency: int | None = None
+    container_concurrency_explicit: bool = False
 
     @property
     def local_timestamp(self) -> float:
@@ -3731,6 +3742,13 @@ def load_function_specs_from_manifest(path: Path) -> list[FunctionSpec]:
                     else []
                 ),
                 execution_api_key=item.get("executionApiKey"),
+                **server_function_runtime_settings(
+                    item,
+                    function_type,
+                    path,
+                    async_key="serverSideAsync",
+                    concurrency_key="containerConcurrency",
+                ),
             )
         )
     return specs
@@ -3926,8 +3944,50 @@ def load_function_specs_from_python(
             visibility=config.get("visibility"),
             logs_enabled=config.get("logs_enabled"),
             generate_contexts=function_config_generate_contexts(config),
+            **server_function_runtime_settings(
+                config,
+                function_type,
+                path,
+                async_key="server_side_async",
+                concurrency_key="container_concurrency",
+            ),
         )
     ]
+
+
+def server_function_runtime_settings(
+    config: dict[str, Any],
+    function_type: FunctionType,
+    path: Path,
+    *,
+    async_key: str,
+    concurrency_key: str,
+) -> dict[str, Any]:
+    """Validate and return Run in Background and container concurrency settings."""
+    settings: dict[str, Any] = {}
+    if async_key in config:
+        value = config[async_key]
+        if function_type != "server":
+            raise DeployError(f"{async_key} applies only to server functions: {path}")
+        if not isinstance(value, bool):
+            raise DeployError(f"{async_key} must be true or false: {path}")
+        settings["server_side_async"] = value
+    if concurrency_key in config:
+        value = config[concurrency_key]
+        if function_type != "server":
+            raise DeployError(
+                f"{concurrency_key} applies only to server functions: {path}"
+            )
+        if value is not None and (
+            isinstance(value, bool) or not isinstance(value, int) or value < 0
+        ):
+            raise DeployError(
+                f"{concurrency_key} must be a non-negative whole number, or None "
+                f"to remove the override: {path}"
+            )
+        settings["container_concurrency"] = value
+        settings["container_concurrency_explicit"] = True
+    return settings
 
 
 def parse_function_spec_from_shell_line(
@@ -4472,6 +4532,9 @@ def build_function_payload(
             # root-level SDK function requires unfiltered generation.
             payload["generateContexts"] = generate_contexts or []
 
+    if spec.server_side_async is not None and spec.function_type == "server":
+        payload["serverSideAsync"] = spec.server_side_async
+
     if spec.execution_api_key and spec.function_type == "server":
         payload["executionApiKey"] = spec.execution_api_key
 
@@ -4601,7 +4664,68 @@ def normalize_function_subset(
         local_normalized, remote_normalized
     )
     normalize_unreported_function_fields_in_place(local_normalized, remote_normalized)
+    local_code, remote_code = local_normalized.get("code"), remote_normalized.get(
+        "code"
+    )
+    if (
+        isinstance(local_code, str)
+        and isinstance(remote_code, str)
+        and local_code != remote_code
+        and code_without_runtime_settings(local_code)
+        == code_without_runtime_settings(remote_code)
+    ):
+        # Only runtime settings changed inside polyConfig. They are applied
+        # with a settings PATCH, so the code itself needs no new deployment.
+        remote_normalized["code"] = local_code
     return local_normalized, remote_normalized
+
+
+# polyConfig keys applied as server-function settings rather than code.
+POLY_CONFIG_RUNTIME_SETTINGS = frozenset({"server_side_async", "container_concurrency"})
+
+
+def code_without_runtime_settings(code: str) -> str:
+    """Return source with polyConfig rewritten without its runtime settings.
+
+    Both sides of a comparison are rewritten the same way, so a source that
+    differs only in those settings compares equal. Unparseable source is
+    returned unchanged.
+    """
+    try:
+        module = ast.parse(code)
+    except SyntaxError:
+        return code
+    for node in module.body:
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            targets = [node.target]
+        else:
+            continue
+        if not any(
+            isinstance(target, ast.Name) and target.id == "polyConfig"
+            for target in targets
+        ):
+            continue
+        try:
+            config = ast.literal_eval(node.value)
+        except (SyntaxError, ValueError):
+            return code
+        if not isinstance(config, dict) or node.end_lineno is None:
+            return code
+        canonical = {
+            key: config[key]
+            for key in sorted(config, key=str)
+            if key not in POLY_CONFIG_RUNTIME_SETTINGS
+        }
+        lines = code.splitlines(keepends=True)
+        start, end = node.lineno - 1, node.end_lineno
+        # AST column offsets count UTF-8 bytes, not characters.
+        prefix = lines[start].encode()[: node.col_offset].decode()
+        suffix = lines[end - 1].encode()[node.end_col_offset :].decode()
+        replacement = f"{prefix}polyConfig = {canonical!r}{suffix}"
+        return "".join(lines[:start]) + replacement + "".join(lines[end:])
+    return code
 
 
 def normalize_unreported_function_fields_in_place(
@@ -4610,6 +4734,54 @@ def normalize_unreported_function_fields_in_place(
     if local.get("requirements") and remote.get("requirements") in (None, []):
         local.pop("requirements", None)
         remote.pop("requirements", None)
+    # Run in Background defaults to off; an unreported value means off.
+    if local.get("serverSideAsync") is False and remote.get("serverSideAsync") in (
+        None,
+        False,
+    ):
+        local.pop("serverSideAsync", None)
+        remote.pop("serverSideAsync", None)
+
+
+# Server-function settings PATCH /functions/server/{id} changes without a new
+# code upload. The platform still rolls out a new revision with the same code.
+SERVER_FUNCTION_SETTINGS_FIELDS = frozenset({"serverSideAsync"})
+
+
+def server_function_settings_patch(
+    spec: FunctionSpec,
+    remote: dict[str, Any] | None,
+    *,
+    force: bool = False,
+) -> dict[str, Any]:
+    """Return the containerConcurrency change for an existing or new function.
+
+    containerConcurrency is not part of the create payload; it is applied with
+    PATCH. ``remote`` is None for a function that does not exist yet.
+    """
+    if spec.function_type != "server" or not spec.container_concurrency_explicit:
+        return {}
+    if remote is None:
+        if spec.container_concurrency is None:
+            return {}
+        return {"containerConcurrency": spec.container_concurrency}
+    if force or remote.get("containerConcurrency") != spec.container_concurrency:
+        return {"containerConcurrency": spec.container_concurrency}
+    return {}
+
+
+def settings_only_function_change(
+    local_normalized: dict[str, Any], remote_normalized: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Return the PATCH body when only settings fields differ, else None."""
+    differing = {
+        key
+        for key in set(local_normalized) | set(remote_normalized)
+        if local_normalized.get(key) != remote_normalized.get(key)
+    }
+    if not differing <= SERVER_FUNCTION_SETTINGS_FIELDS:
+        return None
+    return {key: local_normalized[key] for key in differing if key in local_normalized}
 
 
 def normalize_function_arguments(arguments: Any) -> Any:
@@ -4776,6 +4948,8 @@ class DynamicFunctionPlan:
     cycles: list[list[str]]
     seed_from: str
     offline: bool
+    # containerConcurrency PATCH bodies; applied without a code deployment.
+    settings: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 SDK_ASYNC_FUNCTION_TYPES = {"serverFunction", "apiFunction", "aiFunction"}
@@ -5054,6 +5228,7 @@ def plan_dynamic_functions(
             planned_resource_exports=planned_exports,
         )
     payloads: dict[str, dict[str, Any]] = {}
+    settings: dict[str, dict[str, Any]] = {}
     changed: set[str] = set()
     execution_key = get_execution_api_key() if client is not None else None
     compared: set[str] = set()
@@ -5113,6 +5288,9 @@ def plan_dynamic_functions(
             )
             local, remote = normalize_function_subset(payload, detail)
             differs = local != remote
+            settings_patch = server_function_settings_patch(spec, detail)
+            if settings_patch:
+                settings[key] = settings_patch
             if differs:
                 allowed, _ = can_update(
                     local_timestamp=spec.local_timestamp,
@@ -5126,6 +5304,9 @@ def plan_dynamic_functions(
                     )
         else:
             differs = True
+            settings_patch = server_function_settings_patch(spec, None)
+            if settings_patch:
+                settings[key] = settings_patch
         seed_changed = (
             cached_function_changed(spec, sources[key][1], cached)
             if seed_from == "specs"
@@ -5182,6 +5363,12 @@ def plan_dynamic_functions(
             else ""
         )
         logger.info(f"{index}. {key} [{graph.kinds[key]}] {reason}{scope_note}")
+    for key in sorted(settings):
+        logger.info(
+            f"{key}: containerConcurrency -> "
+            f"{settings[key]['containerConcurrency']}"
+            + ("" if key in order else " (settings update; no code deployment)")
+        )
     return DynamicFunctionPlan(
         by_key,
         payloads,
@@ -5193,6 +5380,7 @@ def plan_dynamic_functions(
         cycles,
         seed_from,
         client is None,
+        settings,
     )
 
 
@@ -5249,8 +5437,10 @@ def execute_dynamic_functions(
             "Offline reports cannot be deployed; rerun against a verified target"
         )
     stats = summary.functions
-    stats.skipped += plan.unchanged
+    settings_only = [key for key in sorted(plan.settings) if key not in plan.order]
+    stats.skipped += max(plan.unchanged - len(settings_only), 0)
     if cli_args.dry_run:
+        stats.updated += len(settings_only)
         for key in plan.order:
             spec = plan.specs[key]
             existing = plan.registry.get(spec.function_type, spec.context, spec.name)
@@ -5308,6 +5498,16 @@ def execute_dynamic_functions(
                 spec.function_type,
                 {"id": result["id"], "context": spec.context, "name": spec.name},
             )
+            # A code deploy drops the Knative containerConcurrency override while
+            # the stored value survives, so always re-apply a declared value.
+            redeploy_settings = {
+                **plan.settings.get(key, {}),
+                **server_function_settings_patch(spec, None),
+            }
+            if redeploy_settings:
+                patch_server_function_settings(
+                    client, result["id"], redeploy_settings, logger
+                )
             run_server_function_post_deploy_script(
                 function_id=result["id"], spec=spec, config=config, logger=logger
             )
@@ -5327,6 +5527,21 @@ def execute_dynamic_functions(
         else:
             stats.created += 1
         logger.ok(f"Deployed {key}")
+    for key in settings_only:
+        spec = plan.specs[key]
+        existing = plan.registry.get(spec.function_type, spec.context, spec.name)
+        if not existing:
+            continue
+        try:
+            patch_server_function_settings(
+                client, existing["id"], plan.settings[key], logger
+            )
+        except DeployError as error:
+            stats.failed += 1
+            logger.fail(f"{key}: {error}")
+            continue
+        stats.updated += 1
+        logger.ok(f"Updated settings for {key} without a code deployment")
     return plan.registry, bool(plan.order)
 
 
@@ -5940,6 +6155,33 @@ def sync_function_group(
                 local_normalized, remote_normalized = normalize_function_subset(
                     payload, detail
                 )
+                settings_patch = server_function_settings_patch(spec, detail)
+                settings_only = (
+                    settings_only_function_change(local_normalized, remote_normalized)
+                    if spec.function_type == "server" and not cli_args.force
+                    else None
+                )
+                if settings_only is not None and (settings_only or settings_patch):
+                    if apply_server_function_settings(
+                        client=client,
+                        spec=spec,
+                        function_id=existing["id"],
+                        patch={**settings_only, **settings_patch},
+                        detail=detail,
+                        cli_args=cli_args,
+                        config=config,
+                        logger=logger,
+                        stats=stats,
+                    ):
+                        detail_cache[(spec.function_type, existing["id"])] = {
+                            **detail,
+                            **settings_only,
+                            **settings_patch,
+                        }
+                        if not cli_args.dry_run:
+                            resume_state.mark_done(resume_key, payload_fingerprint)
+                        any_changed = True
+                    continue
                 if should_skip_unchanged(cli_args, local_normalized, remote_normalized):
                     logger.ok("Skipped")
                     stats.skipped += 1
@@ -5969,6 +6211,9 @@ def sync_function_group(
                     logger.blocked(reason or "Update blocked")
                     stats.blocked += 1
                     continue
+                # A code deploy drops the Knative containerConcurrency override while
+                # the stored value survives, so always re-apply a declared value.
+                settings_patch = server_function_settings_patch(spec, None)
                 if not cli_args.dry_run:
                     result = client.request(
                         "POST",
@@ -5988,6 +6233,10 @@ def sync_function_group(
                         **project_remote_like_template(payload, payload),
                         "id": result["id"],
                     }
+                    if settings_patch:
+                        patch_server_function_settings(
+                            client, result["id"], settings_patch, logger
+                        )
                     run_server_function_post_deploy_script(
                         function_id=result["id"],
                         spec=spec,
@@ -6003,6 +6252,11 @@ def sync_function_group(
                         if gc
                         else "Would update"
                     )
+                    if settings_patch:
+                        logger.planned(
+                            "Would then set containerConcurrency to "
+                            f"{settings_patch['containerConcurrency']}"
+                        )
                 stats.updated += 1
                 any_changed = True
                 continue
@@ -6022,6 +6276,11 @@ def sync_function_group(
                     **project_remote_like_template(payload, payload),
                     "id": result["id"],
                 }
+                new_settings = server_function_settings_patch(spec, None)
+                if new_settings:
+                    patch_server_function_settings(
+                        client, result["id"], new_settings, logger
+                    )
                 run_server_function_post_deploy_script(
                     function_id=result["id"],
                     spec=spec,
@@ -6043,12 +6302,69 @@ def sync_function_group(
                 logger.planned(
                     f"Would create (generateContexts: {gc})" if gc else "Would create"
                 )
+                new_settings = server_function_settings_patch(spec, None)
+                if new_settings:
+                    logger.planned(
+                        "Would then set containerConcurrency to "
+                        f"{new_settings['containerConcurrency']}"
+                    )
             stats.created += 1
             any_changed = True
         except DeployError as exc:
             logger.fail(str(exc))
             stats.failed += 1
     return any_changed
+
+
+def patch_server_function_settings(
+    client: PolyApiClient,
+    function_id: str,
+    patch: dict[str, Any],
+    logger: Logger,
+) -> None:
+    validate_endpoint_payload("UpdateServerCustomFunctionDto", patch)
+    client.request(
+        "PATCH",
+        f"/functions/server/{quote(function_id, safe='')}",
+        payload=patch,
+        expected=(200,),
+    )
+    logger.detail(f"settings: {', '.join(sorted(patch))} applied")
+
+
+def apply_server_function_settings(
+    *,
+    client: PolyApiClient,
+    spec: FunctionSpec,
+    function_id: str,
+    patch: dict[str, Any],
+    detail: dict[str, Any],
+    cli_args: CliArgs,
+    config: DeployConfig,
+    logger: Logger,
+    stats: ArtifactStats,
+) -> bool:
+    """Apply settings-only changes with PATCH instead of a full code deployment."""
+    for key in sorted(patch):
+        logger.detail(f"diff: {key}: {detail.get(key)!r} -> {patch[key]!r}")
+    allowed, reason = can_update(
+        local_timestamp=spec.local_timestamp,
+        remote=detail,
+        config=config,
+        cli_args=cli_args,
+    )
+    if not allowed:
+        logger.blocked(reason or "Update blocked")
+        stats.blocked += 1
+        return False
+    fields = ", ".join(sorted(patch))
+    if cli_args.dry_run:
+        logger.planned(f"Would update settings without a code upload ({fields})")
+    else:
+        patch_server_function_settings(client, function_id, patch, logger)
+        logger.ok(f"Updated settings without a code upload ({fields})")
+    stats.updated += 1
+    return True
 
 
 def run_poly_sync(config: DeployConfig, logger: Logger, reason: str) -> None:
@@ -6067,7 +6383,17 @@ def resolve_poly_generate_contexts(
     logger: Logger,
 ) -> tuple[str, ...]:
     if not config.orphan_excluded_contexts:
+        # The platform's specs filter expands `*` (one segment) and `**` (any
+        # number of segments); pass patterns through unchanged.
         return config.generate_contexts
+    patterns = [context for context in config.generate_contexts if "*" in context]
+    if patterns:
+        raise DeployError(
+            "POLY_DEPLOY_GENERATE_CONTEXTS patterns "
+            + ", ".join(repr(pattern) for pattern in patterns)
+            + " cannot be combined with POLY_DEPLOY_EXCLUDE_ORPHAN_CONTEXTS: Flow "
+            "cannot prove a pattern skips excluded contexts. Use concrete contexts."
+        )
 
     replacement_candidates = (
         collect_local_context_prefixes(config, cli_args, logger) if cli_args else ()
@@ -6747,9 +7073,15 @@ def sync_webhooks(
 
     logger.muted(f"Found {len(files)} local webhook file(s)")
     logger.action("Syncing webhooks...")
+    trigger_routes = (
+        webhook_trigger_double_execution_routes(config, cli_args)
+        if any("serverFunction" in item.data for item in files)
+        else set()
+    )
     for item in files:
         try:
             payload = build_webhook_payload(item.path, item.data, function_registry)
+            warn_webhook_trigger_double_execution(item.data, trigger_routes, logger)
             context = payload["context"]
             name = payload["name"]
             resume_key = f"webhook:{context}:{name}"
@@ -6934,6 +7266,15 @@ def build_webhook_payload(
     }
     if "name" not in payload or "context" not in payload:
         raise DeployError(f"Webhook file {path} must include name and context")
+    if "serverFunctionId" in data:
+        raise DeployError(
+            f"Webhook file {path} must use serverFunction with functionContext "
+            "and functionName instead of serverFunctionId"
+        )
+    if "serverFunction" in data:
+        payload["serverFunctionId"] = resolve_webhook_server_function(
+            path, data["serverFunction"], function_registry
+        )
 
     security_functions = payload.get("securityFunctions")
     if isinstance(security_functions, list):
@@ -6964,6 +7305,74 @@ def build_webhook_payload(
         payload.pop("eventPayloadTypeSchema", None)
 
     return payload
+
+
+def resolve_webhook_server_function(
+    path: Path, reference: Any, function_registry: FunctionRegistry
+) -> str | None:
+    """Resolve a webhook's direct server-function connection; null disconnects it."""
+    if reference is None:
+        return None
+    if (
+        not isinstance(reference, dict)
+        or set(reference) != {"functionContext", "functionName"}
+        or not all(
+            isinstance(reference[key], str) and reference[key].strip()
+            for key in reference
+        )
+    ):
+        raise DeployError(
+            f"Webhook file {path} serverFunction needs functionContext and "
+            "functionName, or null"
+        )
+    return function_registry.require_kind_id(
+        "server", reference["functionContext"], reference["functionName"]
+    )
+
+
+def webhook_trigger_double_execution_routes(
+    config: DeployConfig, cli_args: CliArgs
+) -> set[tuple[str, str, str, str]]:
+    """Return (webhook context, name, function context, name) routed by triggers."""
+    routes: set[tuple[str, str, str, str]] = set()
+    for item in load_artifact_files(config, cli_args, config.trigger_globs):
+        data = item.data if isinstance(item.data, dict) else {}
+        source = data.get("source")
+        destination = data.get("destination")
+        if not isinstance(source, dict) or not isinstance(destination, dict):
+            continue
+        route = (
+            source.get("webhookContext"),
+            source.get("webhookName"),
+            destination.get("functionContext"),
+            destination.get("functionName"),
+        )
+        if all(isinstance(part, str) for part in route):
+            routes.add(route)
+    return routes
+
+
+def warn_webhook_trigger_double_execution(
+    data: dict[str, Any],
+    routes: set[tuple[str, str, str, str]],
+    logger: Logger,
+) -> None:
+    reference = data.get("serverFunction")
+    if not isinstance(reference, dict):
+        return
+    route = (
+        data.get("context"),
+        data.get("name"),
+        reference.get("functionContext"),
+        reference.get("functionName"),
+    )
+    if route in routes:
+        logger.warn(
+            f"Webhook {route[0]}.{route[1]} connects directly to server function "
+            f"{route[2]}.{route[3]}, and a trigger also routes it there: each "
+            "event would run the function twice. Remove the trigger or the "
+            "serverFunction connection."
+        )
 
 
 def normalize_webhook_route_component(value: Any) -> str:
@@ -7237,7 +7646,74 @@ def build_job_payload(
     payload["functions"] = resolved_functions
     if "name" not in payload:
         raise DeployError(f"Job file {path} must include name")
+    validate_job_schedule(payload, path)
     return payload
+
+
+def job_interval_seconds(value: Any) -> int | None:
+    """Return an interval schedule value in seconds, as the platform parses it.
+
+    A whole number, or a string of digits, means minutes. A string such as
+    ``"30s"``, ``"5m"``, or ``"2h"`` is a duration. Anything else is invalid.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        seconds = value * 60
+    elif isinstance(value, float):
+        if not value.is_integer():
+            return None
+        seconds = int(value) * 60
+    elif isinstance(value, str):
+        text = value.strip()
+        if JOB_INTERVAL_MINUTES_PATTERN.fullmatch(text):
+            seconds = int(text) * 60
+        else:
+            match = JOB_INTERVAL_DURATION_PATTERN.fullmatch(text)
+            if not match:
+                return None
+            seconds = (
+                int(match.group(1)) * JOB_INTERVAL_UNIT_SECONDS[match.group(2).lower()]
+            )
+    else:
+        return None
+    if seconds <= 0 or seconds > JOB_INTERVAL_MAX_SECONDS:
+        return None
+    return seconds
+
+
+def validate_job_schedule(payload: dict[str, Any], path: Path) -> None:
+    schedule = payload.get("schedule")
+    if not isinstance(schedule, dict) or schedule.get("type") != "interval":
+        return
+    value = schedule.get("value")
+    seconds = job_interval_seconds(value)
+    if seconds is None:
+        raise DeployError(
+            f"Job file {path} has an invalid interval {value!r}: use a whole "
+            'number of minutes (e.g. 5) or a duration such as "30s", "5m", or "2h"'
+        )
+    if seconds < JOB_INTERVAL_MIN_SECONDS:
+        raise DeployError(
+            f"Job file {path} has an interval of {seconds} second(s); the "
+            f"minimum is {JOB_INTERVAL_MIN_SECONDS} seconds"
+        )
+
+
+def normalize_job_interval_in_place(local: Any, remote: Any) -> None:
+    """Compare interval schedules in seconds: "60s", "1m", and 1 are equal."""
+    if not isinstance(local, dict) or not isinstance(remote, dict):
+        return
+    local_schedule = local.get("schedule")
+    remote_schedule = remote.get("schedule")
+    if not isinstance(local_schedule, dict) or not isinstance(remote_schedule, dict):
+        return
+    if {local_schedule.get("type"), remote_schedule.get("type")} != {"interval"}:
+        return
+    for schedule in (local_schedule, remote_schedule):
+        seconds = job_interval_seconds(schedule.get("value"))
+        if seconds is not None:
+            schedule["value"] = seconds
 
 
 def normalize_job_subset(
@@ -7246,6 +7722,7 @@ def normalize_job_subset(
     local_normalized, remote_normalized = normalize_dict_subset(payload, remote)
     normalize_unreported_job_limits_in_place(local_normalized, remote_normalized)
     normalize_unreported_job_defaults_in_place(local_normalized, remote_normalized)
+    normalize_job_interval_in_place(local_normalized, remote_normalized)
     return local_normalized, remote_normalized
 
 
@@ -7729,6 +8206,11 @@ def webhook_contexts_from_raw(data: dict[str, Any]) -> set[str]:
     context = data.get("context")
     if isinstance(context, str) and context.strip():
         contexts.add(context)
+    server_function = data.get("serverFunction")
+    if isinstance(server_function, dict):
+        function_context = server_function.get("functionContext")
+        if isinstance(function_context, str) and function_context.strip():
+            contexts.add(function_context)
     security_functions = data.get("securityFunctions")
     if not isinstance(security_functions, list):
         return contexts
@@ -8300,6 +8782,15 @@ def build_local_webhook_document(
                     )
             rewritten.append(rewritten_entry)
         document["securityFunctions"] = rewritten
+    server_function_id = detail.get("serverFunctionId")
+    if isinstance(server_function_id, str) and server_function_id:
+        match = function_registry.find_by_id(server_function_id, function_type="server")
+        if match is not None:
+            _kind, function_item = match
+            document["serverFunction"] = {
+                "functionContext": function_item["context"],
+                "functionName": function_item["name"],
+            }
     return document
 
 
@@ -9320,6 +9811,8 @@ def validate_local_artifact(
             for item in data.get("securityFunctions", [])
             if isinstance(item, dict)
         ]
+        if isinstance(data.get("serverFunction"), dict):
+            references.append(data["serverFunction"])
     elif kind == "jobs":
         references = [
             {
@@ -9334,6 +9827,8 @@ def validate_local_artifact(
         references = [data.get("source", {}), data.get("destination", {})]
     elif kind == "ai-functions":
         references = [data.get("systemPromptVariable", {})]
+        if isinstance(data.get("twilioAuthTokenVariable"), dict):
+            references.append(data["twilioAuthTokenVariable"])
         for tool in data.get("toolFunctions", []):
             if isinstance(tool, dict):
                 references.append(
@@ -9658,6 +10153,98 @@ def variable_reference(
     )
 
 
+def secret_variable_reference(
+    reference: dict[str, Any],
+    variables: list[dict[str, Any]],
+    config: DeployConfig,
+    *,
+    label: str,
+) -> str:
+    """Resolve a variable reference that the platform requires to be SECRET."""
+    identifier = variable_reference(reference, variables, config)
+    record = next((item for item in variables if item.get("id") == identifier), {})
+    secrecy = record.get("secrecy")
+    if secrecy is None and isinstance(record.get("secret"), bool):
+        # Legacy variables report a boolean secret flag instead of secrecy.
+        secrecy = "SECRET" if record["secret"] else "NONE"
+    # Preflight placeholders carry no secrecy; the platform checks it again.
+    if secrecy is not None and secrecy != "SECRET":
+        raise DeployError(
+            f"{label} {reference.get('variableContext')}."
+            f"{reference.get('variableName')} must be a SECRET variable"
+        )
+    return identifier
+
+
+def resolve_local_schema_root(schema: dict[str, Any]) -> Any:
+    """Follow a root $ref that points inside the same schema document."""
+    seen: set[str] = set()
+    current: Any = schema
+    while isinstance(current, dict) and isinstance(current.get("$ref"), str):
+        reference = current["$ref"]
+        if not reference.startswith("#/") or reference in seen:
+            return current
+        seen.add(reference)
+        target: Any = schema
+        for part in reference[2:].split("/"):
+            part = part.replace("~1", "/").replace("~0", "~")
+            if not isinstance(target, dict) or part not in target:
+                return current
+            target = target[part]
+        current = target
+    return current
+
+
+def validate_ai_schema_root(key: str, schema: Any) -> None:
+    """Match the platform: structured output needs an object at the schema root."""
+    if schema is None:
+        return
+    message = (
+        f"AI function {key} must describe an object at its root; root primitives, "
+        "arrays, unions, enum, and const are not supported"
+    )
+    if not isinstance(schema, dict):
+        raise DeployError(message)
+    root = resolve_local_schema_root(schema)
+    if (
+        not isinstance(root, dict)
+        or root.get("type", "object") != "object"
+        or any(name in root for name in ("anyOf", "oneOf", "allOf", "enum", "const"))
+    ):
+        raise DeployError(message)
+
+
+def validate_ai_error_schema(payload: dict[str, Any]) -> None:
+    """Match the platform's errorSchema rule before any write."""
+    schema = payload.get("errorSchema")
+    if not isinstance(schema, dict):
+        return
+    if not payload.get("outputSchema"):
+        raise DeployError("AI function errorSchema requires outputSchema to be set")
+    root = resolve_local_schema_root(schema)
+    properties = root.get("properties") if isinstance(root, dict) else None
+    properties = properties if isinstance(properties, dict) else {}
+    required = root.get("required") if isinstance(root, dict) else None
+    required = required if isinstance(required, list) else []
+    status = properties.get("status")
+    status = status if isinstance(status, dict) else {}
+    if not (status.get("const") == "failed" or status.get("enum") == ["failed"]) or (
+        "status" not in required
+    ):
+        raise DeployError(
+            'AI function errorSchema must declare a required "status" fixed to "failed"'
+        )
+    message = properties.get("message")
+    if (
+        not isinstance(message, dict)
+        or message.get("type") != "string"
+        or "message" not in required
+    ):
+        raise DeployError(
+            'AI function errorSchema must declare "message" as a required string'
+        )
+
+
 def validate_endpoint_payload(name: str, payload: dict[str, Any]) -> None:
     schema_path = Path(__file__).parent / "schemas" / f"{name}.schema.json"
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
@@ -9745,7 +10332,10 @@ def resolve_ai_payload(
     config: DeployConfig,
 ) -> dict[str, Any]:
     require_owned_context(data.get("context"), config)
-    if any(key in data for key in ("id", "systemPromptVariableId")):
+    if any(
+        key in data
+        for key in ("id", "systemPromptVariableId", "twilioAuthTokenVariableId")
+    ):
         raise DeployError("AI function artefacts must use portable references")
     payload = copy.deepcopy(data)
     prompt = payload.pop("systemPromptVariable", None)
@@ -9755,6 +10345,30 @@ def resolve_ai_payload(
         payload["systemPromptVariableId"] = variable_reference(
             prompt, variables, config
         )
+    if "twilioAuthTokenVariable" in payload:
+        token = payload.pop("twilioAuthTokenVariable")
+        if token is None:
+            # null returns a voice function to the platform's Twilio credentials.
+            payload["twilioAuthTokenVariableId"] = None
+        elif isinstance(token, dict) and set(token) == {
+            "variableName",
+            "variableContext",
+        }:
+            if str(payload.get("type", "")).upper() != "VOICE":
+                raise DeployError(
+                    "twilioAuthTokenVariable can only be set on VOICE AI functions"
+                )
+            payload["twilioAuthTokenVariableId"] = secret_variable_reference(
+                token, variables, config, label="twilioAuthTokenVariable"
+            )
+        else:
+            raise DeployError(
+                "twilioAuthTokenVariable needs variableName and variableContext, "
+                "or null"
+            )
+    for key in ("outputSchema", "errorSchema"):
+        validate_ai_schema_root(key, payload.get(key))
+    validate_ai_error_schema(payload)
     if "toolFunctions" in payload:
         if not isinstance(payload["toolFunctions"], list):
             raise DeployError("toolFunctions must be an array")
@@ -9848,7 +10462,11 @@ def include_planned_references(
         return
 
     def append_missing(
-        records: list[dict[str, Any]], context: str, name: str, kind: str
+        records: list[dict[str, Any]],
+        context: str,
+        name: str,
+        kind: str,
+        **extra: Any,
     ) -> None:
         if not any(
             (item.get("context"), item.get("name")) == (context, name)
@@ -9859,6 +10477,7 @@ def include_planned_references(
                     "id": f"planned:{kind}:{context}.{name}",
                     "context": context,
                     "name": name,
+                    **extra,
                 }
             )
 
@@ -9870,7 +10489,15 @@ def include_planned_references(
     if "variables" in config.enabled_types:
         for item in load_artifact_files(config, cli_args, config.variable_globs):
             payload = build_variable_payload(item.path, item.data)
-            append_missing(variables, payload["context"], payload["name"], "variable")
+            append_missing(
+                variables,
+                payload["context"],
+                payload["name"],
+                "variable",
+                **{
+                    key: payload[key] for key in ("secrecy", "secret") if key in payload
+                },
+            )
 
 
 def sync_ai_functions(
@@ -9957,7 +10584,9 @@ MCP_SERVER_FIELDS = frozenset(
         "oauthRedirectUris",
     }
 )
-MCP_TOOL_FIELDS = frozenset({"functionName", "functionContext", "argumentConfig"})
+MCP_TOOL_FIELDS = frozenset(
+    {"functionName", "functionContext", "argumentConfig", "widget"}
+)
 MCP_ARGUMENT_FIELDS = {
     "ai": frozenset({"key", "source"}),
     "hardcoded": frozenset({"key", "source", "value"}),
@@ -9979,6 +10608,14 @@ def mcp_variable_references(data: dict[str, Any]) -> list[dict[str, Any]]:
                 for argument in tool.get("argumentConfig", [])
                 if isinstance(argument, dict) and argument.get("source") == "variable"
             )
+            widget = tool.get("widget")
+            if isinstance(widget, dict) and isinstance(widget.get("settings"), list):
+                references.extend(
+                    setting["variable"]
+                    for setting in widget["settings"]
+                    if isinstance(setting, dict)
+                    and isinstance(setting.get("variable"), dict)
+                )
     return [
         {
             key: reference[key]
@@ -10048,6 +10685,54 @@ def mcp_tool_reference(
     )
 
 
+def resolve_mcp_widget(
+    widget: Any, variables: list[dict[str, Any]], config: DeployConfig
+) -> dict[str, Any]:
+    """Resolve a tool widget's settings from portable Vari references."""
+    if (
+        not isinstance(widget, dict)
+        or not set(widget) <= {"enabled", "settings"}
+        or not isinstance(widget.get("enabled"), bool)
+    ):
+        raise DeployError(
+            "MCP tool widget needs a boolean enabled and optional settings"
+        )
+    resolved: dict[str, Any] = {"enabled": widget["enabled"]}
+    if "settings" in widget:
+        settings = widget["settings"]
+        if not isinstance(settings, list):
+            raise DeployError("MCP tool widget settings must be an array")
+        resolved_settings = []
+        keys: set[str] = set()
+        for setting in settings:
+            variable = setting.get("variable") if isinstance(setting, dict) else None
+            if (
+                not isinstance(setting, dict)
+                or set(setting) != {"key", "variable"}
+                or not isinstance(setting["key"], str)
+                or not setting["key"].strip()
+                or not isinstance(variable, dict)
+                or set(variable) != {"variableName", "variableContext"}
+            ):
+                raise DeployError(
+                    "MCP tool widget settings need a key and a variable with "
+                    "variableName and variableContext"
+                )
+            if setting["key"] in keys:
+                raise DeployError(
+                    f"MCP tool widget setting {setting['key']} is duplicated"
+                )
+            keys.add(setting["key"])
+            resolved_settings.append(
+                {
+                    "key": setting["key"],
+                    "variableId": variable_reference(variable, variables, config),
+                }
+            )
+        resolved["settings"] = resolved_settings
+    return resolved
+
+
 def resolve_mcp_payload(
     data: dict[str, Any],
     functions: list[dict[str, Any]],
@@ -10094,7 +10779,7 @@ def resolve_mcp_payload(
             if not isinstance(tool, dict) or set(tool) - MCP_TOOL_FIELDS:
                 raise DeployError(
                     "MCP tool functions use only functionName, functionContext, "
-                    "and argumentConfig"
+                    "argumentConfig, and widget"
                 )
             resolved: dict[str, Any] = {
                 "id": mcp_tool_reference(
@@ -10125,6 +10810,10 @@ def resolve_mcp_payload(
                         argument.pop("variableContext")
                     arguments.append(argument)
                 resolved["argumentConfig"] = arguments
+            if "widget" in tool:
+                resolved["widget"] = resolve_mcp_widget(
+                    tool["widget"], variables, config
+                )
             resolved_tools.append(resolved)
         payload["toolFunctions"] = resolved_tools
     validate_endpoint_payload("CreateMCPServerDto", payload)
@@ -10281,6 +10970,42 @@ def validate_canopy(data: dict[str, Any], config: DeployConfig) -> None:
         "PUBLIC",
     }:
         raise DeployError("Invalid Canopy visibility")
+    if "publicAccess" in data:
+        if not isinstance(data["publicAccess"], bool):
+            raise DeployError("Canopy publicAccess must be true or false")
+        if data["publicAccess"] and data.get("visibility") != "PUBLIC":
+            raise DeployError(
+                "Canopy publicAccess: true requires visibility: PUBLIC; it has no "
+                "effect on other applications"
+            )
+
+
+def confirm_canopy_public_access(label: str, logger: Logger) -> bool:
+    """Ask before letting anyone with the link use an application unsigned-in."""
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        logger.warn(
+            f"Canopy {label}: skipped because publicAccess: true needs interactive "
+            "confirmation; rerun Flow in a terminal to enable it"
+        )
+        return False
+    try:
+        answer = (
+            input(
+                f"Enable publicAccess for Canopy {label}? Anyone with its link can "
+                "use it without signing in. [y/N]: "
+            )
+            .strip()
+            .lower()
+        )
+    except EOFError:
+        answer = ""
+    except KeyboardInterrupt:
+        print()
+        raise DeployError("Canopy publicAccess confirmation cancelled") from None
+    if answer in {"y", "yes"}:
+        return True
+    logger.warn(f"Canopy {label}: skipped; publicAccess was not confirmed")
+    return False
 
 
 def canopy_overrides() -> dict[str, str]:
@@ -10376,6 +11101,7 @@ def sync_canopy(
             for key, value in data.items()
             if key not in {"id", "description", "visibility"}
         }
+        label = data.get("subpath") or data.get("name") or data.get("id")
         if remote is None:
             if not data.get("name"):
                 raise DeployError("A new Canopy application requires a name")
@@ -10383,8 +11109,18 @@ def sync_canopy(
             for key in ("description", "visibility"):
                 if key in data:
                     payload[key] = data[key]
-            plans.append(("POST", "/applications", payload, item.path))
+            plans.append(
+                ("POST", "/applications", payload, item.path, data.get("publicAccess"))
+            )
             continue
+        if data.get("publicAccess") is True and remote.get("visibility") not in (
+            None,
+            "PUBLIC",
+        ):
+            raise DeployError(
+                f"Canopy {label}: publicAccess: true requires a PUBLIC application, "
+                f"but the deployed application is {remote.get('visibility')}"
+            )
         path = f"/applications/{resource_id(remote)}"
         missing_config = False
         try:
@@ -10394,6 +11130,9 @@ def sync_canopy(
                 raise
             detail = {}
             missing_config = True
+        enables_public_access = (
+            data.get("publicAccess") is True and detail.get("publicAccess") is not True
+        )
         description_changed = "description" in data and data[
             "description"
         ] != remote.get("description")
@@ -10408,10 +11147,22 @@ def sync_canopy(
             update = {"config": app_config}
             if "description" in data:
                 update["description"] = data["description"]
-            plans.append(("PATCH", path, update, item.path))
+            plans.append(("PATCH", path, update, item.path, enables_public_access))
         else:
-            plans.append(("PUT", f"{path}/config", app_config, item.path))
-    for method, path, payload, source in plans:
+            plans.append(
+                ("PUT", f"{path}/config", app_config, item.path, enables_public_access)
+            )
+    for method, path, payload, source, enables_public_access in plans:
+        if enables_public_access:
+            label = source.relative_to(config.repo_root).as_posix()
+            if cli_args.dry_run:
+                logger.warn(
+                    f"Canopy {label} would enable publicAccess: anyone with its "
+                    "link could use it without signing in; a real push asks first"
+                )
+            elif not confirm_canopy_public_access(label, logger):
+                summary.canopy.blocked += 1
+                continue
         logger.info(
             f"{'Would apply' if cli_args.dry_run else 'Applying'} {method} {path}"
         )
@@ -10483,6 +11234,65 @@ def confirm_subscription_recreate(identity: str) -> bool:
     )
 
 
+# Changing any of these replaces the stream: Flow deletes and recreates it.
+SUBSCRIPTION_STRUCTURAL_FIELDS = (
+    "type",
+    "transportProtocol",
+    "websocketUrl",
+    "query",
+    "functionId",
+)
+# PATCH /subscriptions/graphql/{id} applies these to the existing stream.
+SUBSCRIPTION_PATCH_FIELDS = (
+    "description",
+    "visibility",
+    "ownerUserId",
+    "enabled",
+    "functionParams",
+    "ohipMaintainOffset",
+    "eventInactivityThresholdMs",
+    "queueId",
+)
+
+
+def subscription_compare_value(key: str, value: Any) -> Any:
+    # The platform stores an empty description as null.
+    if key == "description" and value == "":
+        return None
+    return canonicalize(value)
+
+
+def plan_subscription_update(
+    payload: dict[str, Any], detail: dict[str, Any], *, force: bool = False
+) -> tuple[list[str], dict[str, Any]]:
+    """Split local differences into structural fields and an in-place PATCH.
+
+    Only fields the artefact declares are compared. The platform stores
+    paramsObject redacted and does not return the OHIP offset selection, so
+    Flow cannot detect changes to them; ``force`` resends paramsObject.
+    """
+    structural = [
+        key
+        for key in SUBSCRIPTION_STRUCTURAL_FIELDS
+        if key in payload
+        and subscription_compare_value(key, payload[key])
+        != subscription_compare_value(key, detail.get(key))
+    ]
+    changes = {
+        key: copy.deepcopy(payload[key])
+        for key in SUBSCRIPTION_PATCH_FIELDS
+        if key in payload
+        and (
+            force
+            or subscription_compare_value(key, payload[key])
+            != subscription_compare_value(key, detail.get(key))
+        )
+    }
+    if force and "paramsObject" in payload:
+        changes["paramsObject"] = copy.deepcopy(payload["paramsObject"])
+    return structural, changes
+
+
 def sync_subscriptions(
     client: PolyApiClient,
     config: DeployConfig,
@@ -10499,7 +11309,7 @@ def sync_subscriptions(
     include_planned_references(
         config, cli_args, logger, functions, variables, ("server",)
     )
-    plans = [
+    resolved = [
         (
             item,
             resolve_subscription_payload(item.data, functions, variables, config),
@@ -10507,18 +11317,53 @@ def sync_subscriptions(
         )
         for item in files
     ]
-    for item, payload, remote in plans:
+    # Read and validate every selected subscription before the first write.
+    plans: list[tuple[str, str, dict[str, Any], dict[str, Any] | None]] = []
+    for item, payload, remote in resolved:
         identity = f"{item.data['context']}.{item.data['name']}"
-        if remote is not None and not cli_args.force:
-            logger.warn(
-                f"{identity}: updates are unsupported; --force requests confirmed recreation"
-            )
-            summary.subscriptions.blocked += 1
+        if remote is None:
+            plans.append(("create", identity, payload, None))
+            continue
+        path = f"/subscriptions/graphql/{resource_id(remote)}"
+        detail = resource_detail(client.request("GET", path))
+        structural, changes = plan_subscription_update(
+            payload, detail, force=cli_args.force
+        )
+        if structural:
+            fields = ", ".join(structural)
+            if not cli_args.force:
+                logger.warn(
+                    f"{identity}: {fields} changed and cannot be updated in place; "
+                    "--force requests confirmed recreation"
+                )
+                summary.subscriptions.blocked += 1
+                continue
+            logger.info(f"{identity}: recreation required for {fields}")
+            plans.append(("recreate", identity, payload, remote))
+            continue
+        if not changes:
+            logger.muted(f"{identity}: unchanged")
+            summary.subscriptions.skipped += 1
+            continue
+        validate_endpoint_payload("GraphQLSubscriptionUpdateDto", changes)
+        plans.append(("patch", identity, changes, remote))
+    for action, identity, payload, remote in plans:
+        if action == "patch":
+            assert remote is not None
+            fields = ", ".join(sorted(payload))
+            if cli_args.dry_run:
+                logger.info(f"Would update subscription {identity} in place: {fields}")
+            else:
+                client.request(
+                    "PATCH",
+                    f"/subscriptions/graphql/{resource_id(remote)}",
+                    payload=payload,
+                )
+                logger.info(f"Updated subscription {identity} in place: {fields}")
+            summary.subscriptions.updated += 1
             continue
         if cli_args.dry_run:
-            logger.info(
-                f"Would {'recreate' if remote else 'create'} subscription {identity}"
-            )
+            logger.info(f"Would {action} subscription {identity}")
         else:
             if remote is not None:
                 if not confirm_subscription_recreate(identity):
@@ -10558,6 +11403,7 @@ def main() -> int:
         "train-model",
         "delete-content",
         "logs",
+        "jobs",
     }:
         from cli import operations
 

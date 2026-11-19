@@ -446,6 +446,31 @@ def function_logs(
     )
 
 
+def find_job(client: flow.PolyApiClient, reference: str) -> dict[str, Any]:
+    """Select one job by exact name, or by ID when no name matches."""
+    jobs = flow.resource_list(client.request("GET", "/jobs"))
+    matches = [item for item in jobs if item.get("name") == reference]
+    if not matches:
+        matches = [item for item in jobs if item.get("id") == reference]
+    if len(matches) != 1:
+        raise flow.DeployError(
+            f"Job {reference} has {len(matches)} matches in the target environment"
+        )
+    return matches[0]
+
+
+def run_job(client: flow.PolyApiClient, job: dict[str, Any]) -> dict[str, Any]:
+    """Queue one immediate run of a job, outside its schedule."""
+    result = client.request(
+        "POST",
+        f"/jobs/{flow.resource_id(job)}/trigger",
+        expected=(200, 201, 202),
+    )
+    if not isinstance(result, dict) or not isinstance(result.get("runId"), str):
+        raise flow.DeployError("Job trigger response did not include a runId")
+    return result
+
+
 def format_logs(value: Any, *, raw: bool = False) -> str:
     if raw:
         return value if isinstance(value, str) else json.dumps(value, indent=2)
@@ -587,6 +612,17 @@ def create_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print the original JSON response instead of formatted logs",
     )
+    jobs = sub.add_parser("jobs", help="Run a deployed job")
+    job_commands = jobs.add_subparsers(dest="job_command", required=True)
+    job_run = job_commands.add_parser(
+        "run", help="Queue one immediate run of a job by exact name or ID"
+    )
+    job_run.add_argument("job", nargs="?")
+    job_run.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Find the job without running it",
+    )
     return parser
 
 
@@ -604,6 +640,8 @@ def main(argv: list[str] | None = None) -> int:
         args.function_id = prompt_value(args.function_id, "Function ID")
         if args.limit is None:
             args.limit = args.page_size
+    elif args.command == "jobs":
+        args.job = prompt_value(args.job, "Job name")
     repo = flow.find_repo_root()
     logger = flow.Logger(False)
     dry_run = (
@@ -645,7 +683,7 @@ def main(argv: list[str] | None = None) -> int:
         kinds = list(dict.fromkeys(part.strip() for part in args.types.split(",")))
         if not kinds or any(kind not in ENDPOINTS for kind in kinds):
             raise flow.DeployError("Choose valid resource types for deletion")
-    elif min(args.page, args.page_size, args.limit) < 1:
+    elif args.command == "logs" and min(args.page, args.page_size, args.limit) < 1:
         raise flow.DeployError("Log page, page size, and limit must be positive")
 
     target = flow.get_target_env_id(env_file)
@@ -692,6 +730,16 @@ def main(argv: list[str] | None = None) -> int:
             ),
             apply=args.apply,
         )
+    elif args.command == "jobs":
+        job = find_job(client, args.job)
+        label = f"{job.get('name', args.job)} ({job.get('id')})"
+        if args.dry_run:
+            print(f"Would run job {label}")
+        else:
+            result = run_job(client, job)
+            print(f"Queued job {label}: runId {result['runId']}")
+            if result.get("queuedAt"):
+                print(f"Queued at {result['queuedAt']}")
     else:
         print(
             format_logs(
