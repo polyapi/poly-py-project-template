@@ -148,13 +148,23 @@ def args(**changes):
     return replace(flow.CliArgs(False, False, False, False, (), None, False), **changes)
 
 
+def env_file(repo, environment=None):
+    """The selected env file: only it may name the table data folder."""
+    path = repo / "workflows/selected.env"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "" if environment is None else f"POLY_DEPLOY_TABLE_DATA_ENV={environment}\n"
+    )
+    return flow.EnvLoadResult(
+        display_path="workflows/selected.env",
+        resolved_path=path,
+        exists=True,
+        from_envpath=True,
+    )
+
+
 def config(repo, environment=None):
-    if environment is not None:
-        os.environ["POLY_DEPLOY_TABLE_DATA_ENV"] = environment
-    try:
-        return flow.build_config(repo, args())
-    finally:
-        os.environ.pop("POLY_DEPLOY_TABLE_DATA_ENV", None)
+    return flow.build_config(repo, args(), env_file(repo, environment))
 
 
 def write(repo, relative, content):
@@ -660,9 +670,11 @@ def test_rows_changed_after_the_file_are_blocked_unless_forced(repo, monkeypatch
     assert client.writes("update") == [] and stats.blocked == 1
     assert (
         "Not updated: A (changed in the table at 2026-11-21T00:00:00Z; its file last "
-        "changed at 2026-11-20T00:00:00Z); --force overwrites it"
+        "changed at 2026-11-20T00:00:00Z); --force-table-data overwrites it"
     ) in logged(logger)
     stats, _ = sync(repo, client, force=True)
+    assert stats.updated == 0 and stats.blocked == 1  # --force leaves rows alone
+    stats, _ = sync(repo, client, force_table_data=True)
     assert stats.updated == 1 and client.row("A")["name"] == "From file"
     # The update stamped updatedAt; with the guard off an older file still wins.
     client.row("A")["name"] = "From app"
@@ -919,3 +931,221 @@ def test_project_table_data_files_are_valid(monkeypatch):
     root = Path(__file__).resolve().parents[2]
     cfg = flow.build_config(root, args())
     assert flow.validate_table_data(cfg, args()).problems == []
+
+
+# --- review fixes ---
+
+
+def test_the_table_data_folder_comes_from_the_selected_env_file_only(repo, monkeypatch):
+    monkeypatch.setenv("POLY_DEPLOY_TABLE_DATA_ENV", "prod")
+    assert flow.build_config(repo, args()).table_data_environment == ""
+    assert config(repo).table_data_environment == ""
+    assert flow.declared_table_data_environment(env_file(repo)) is None
+    assert config(repo, "dev").table_data_environment == "dev"
+    assert flow.declared_table_data_environment(env_file(repo, " dev ")) == "dev"
+
+
+def test_force_table_data_is_its_own_flag():
+    assert flow.parse_args(["push", "--force-table-data"]).force_table_data is True
+    parsed = flow.parse_args(["push", "--force"])
+    assert (parsed.force, parsed.force_table_data) == (True, False)
+
+
+def test_a_prune_keeps_rows_another_environment_folder_lists(repo):
+    data_file(repo, [{"hotel_id": "A", "name": "Hotel A"}])
+    data_file(repo, [{"hotel_id": "D", "name": "Dev"}], folder="dev")
+    client = TabiClient([stored("r1", "A"), stored("r2", "D"), stored("r3", "X")])
+    # The env file does not name the dev folder: dev's rows stay anyway.
+    stats, _ = sync(repo, client, prune_table_data=True)
+    assert client.writes("delete") == [{"where": {"id": {"in": ["r3"]}}}]
+    assert sorted(row["hotel_id"] for row in client.rows) == ["A", "D"]
+    assert stats.deleted == 1
+    # A folder name that matches no folder is reported.
+    _, logger = sync(repo, client, environment="develop", dry_run=True)
+    assert (
+        "No data/develop/ folder holds table data; check POLY_DEPLOY_TABLE_DATA_ENV "
+        "in the selected env file"
+    ) in logged(logger)
+
+
+def test_a_prune_deletes_nothing_while_a_file_it_cannot_read_could_list_rows(repo):
+    data_file(repo, [{"hotel_id": "A", "name": "Hotel A"}])
+    client = TabiClient([stored("r1", "A"), stored("r3", "X")])
+    prod = write(repo, "workflows/src/hotels/artefacts/tabi/data/prod/rows.json", "{")
+    stats, logger = sync(repo, client, prune_table_data=True)
+    assert client.writes("delete") == [] and stats.deleted == 0
+    assert (
+        "Not pruning X: workflows/src/hotels/artefacts/tabi/data/prod/rows.json "
+        "could not be read, so its rows cannot be told apart from rows no file lists"
+    ) in logged(logger)
+    prod.write_text(
+        json.dumps(
+            {"context": TABLE["context"], "name": TABLE["name"], "key": "hotel_id"}
+        )
+    )
+    _, logger = sync(repo, client, prune_table_data=True)
+    assert client.writes("delete") == []
+    assert (
+        "Not pruning X: a data file of this table in another environment folder "
+        "could not be read, so the rows it lists are unknown"
+    ) in logged(logger)
+
+
+def test_a_shallow_clone_that_cuts_off_a_file_history_blocks_its_rows(tmp_path):
+    if shutil.which("git") is None:
+        pytest.skip("git is not installed")
+    base = {
+        name: value for name, value in os.environ.items() if not name.startswith("GIT_")
+    }
+
+    def git(cwd, date, *arguments):
+        subprocess.run(
+            ["git", *arguments],
+            cwd=cwd,
+            check=True,
+            capture_output=True,
+            env={
+                **base,
+                "GIT_AUTHOR_NAME": "Flow",
+                "GIT_AUTHOR_EMAIL": "flow@example.test",
+                "GIT_COMMITTER_NAME": "Flow",
+                "GIT_COMMITTER_EMAIL": "flow@example.test",
+                "GIT_AUTHOR_DATE": date,
+                "GIT_COMMITTER_DATE": date,
+            },
+        )
+
+    origin = tmp_path / "origin"
+    origin.mkdir()
+    git(origin, "2020-01-01T00:00:00Z", "init", "--quiet")
+    (origin / "rows.json").write_text("{}")
+    (origin / "recent.json").write_text("{}")
+    for date, message, change in (
+        ("2020-01-01T00:00:00Z", "rows", None),
+        ("2021-01-01T00:00:00Z", "other", ("other.txt", "x")),
+        ("2025-06-01T00:00:00Z", "recent", ("recent.json", '{"changed": true}')),
+    ):
+        if change:
+            (origin / change[0]).write_text(change[1])
+        git(origin, date, "add", ".")
+        git(origin, date, "commit", "-q", "--no-verify", "--no-gpg-sign", "-m", message)
+    # The clone's history starts at "other", which seems to add every file.
+    git(
+        tmp_path,
+        "2025-06-01T00:00:00Z",
+        "clone",
+        "-q",
+        "--depth",
+        "2",
+        f"file://{origin}",
+        "clone",
+    )
+    clone = tmp_path / "clone"
+    assert flow.table_data_file_timestamp(clone / "rows.json") is None
+    assert (
+        flow.table_data_file_timestamp(clone / "recent.json")
+        == datetime(2025, 6, 1, tzinfo=timezone.utc).timestamp()
+    )
+
+    data_set = flow.TableDataSet(
+        context=TABLE["context"],
+        name=TABLE["name"],
+        key=("hotel_id",),
+        rows=(flow.TableDataRow({"hotel_id": "A", "name": "From file"}, (clone,)),),
+        paths=(clone,),
+    )
+
+    def plan(guard):
+        return flow.plan_table_data_set(
+            data_set,
+            columns=COLUMN_MAP,
+            remote_rows=[stored("r1", "A", name="From app")],
+            guard=guard,
+            file_timestamp=lambda path: None,
+            now=NOW,
+        )
+
+    assert plan(True).blocked == [
+        "A (this shallow Git clone does not hold its file's last change; fetch the "
+        "full history, such as fetch-depth: 0)"
+    ]
+    assert len(plan(False).updates) == 1
+
+
+def plan_rows(rows, remote, columns=COLUMN_MAP, key=("hotel_id",)):
+    data_set = flow.TableDataSet(
+        context=TABLE["context"],
+        name=TABLE["name"],
+        key=key,
+        rows=tuple(flow.TableDataRow(row, (Path("/p/f.json"),)) for row in rows),
+        paths=(Path("/p/f.json"),),
+    )
+    return flow.plan_table_data_set(
+        data_set,
+        columns=columns,
+        remote_rows=remote,
+        guard=True,
+        file_timestamp=lambda path: FILE_TIME,
+        now=NOW,
+    )
+
+
+def test_keys_on_date_and_timestamp_columns_match_the_stored_instants():
+    columns = {**COLUMN_MAP, "day": {"name": "day", "type": "date", "required": True}}
+    plan = plan_rows(
+        [
+            {
+                "hotel_id": "A",
+                "day": "2024-01-01",
+                "opened_at": "2024-01-01T10:00:00+01:00",
+                "rooms": 5,
+            }
+        ],
+        [
+            stored(
+                "r1",
+                "A",
+                day="2024-01-01T00:00:00.000Z",
+                opened_at="2024-01-01T09:00:00.000Z",
+                rooms=5,
+            )
+        ],
+        columns,
+        ("hotel_id", "day", "opened_at"),
+    )
+    assert (len(plan.inserts), plan.unchanged, len(plan.extras)) == (0, 1, 0)
+
+
+def test_rows_without_key_values_or_unlisted_duplicates_are_only_extras():
+    remote = [
+        stored("r1", "A"),
+        {**stored("r2", "X"), "hotel_id": None},
+        {**stored("r3", "Y"), "hotel_id": None},
+        stored("r4", "D"),
+        stored("r5", "D"),
+    ]
+    plan = plan_rows([{"hotel_id": "A", "name": "Hotel A"}], remote)
+    assert plan.unchanged == 1
+    assert [row["id"] for row in plan.extras] == ["r4", "r5", "r2", "r3"]
+    # A listed key that several rows hold is ambiguous, so the table stops.
+    with pytest.raises(flow.TableDataError, match="several table rows have key D"):
+        plan_rows([{"hotel_id": "D", "name": "D"}], remote)
+
+
+def test_whole_numbers_beyond_2_53_must_be_written_as_strings():
+    document = {
+        "name": "t",
+        "key": "hotel_id",
+        "rows": [{"hotel_id": "A", "settings": {"external": [2**60]}}],
+    }
+    with pytest.raises(
+        flow.TableDataError,
+        match="row 1 sets 'settings' to a whole number beyond 2\\^53, which JSON "
+        "cannot carry exactly; write it as a string",
+    ):
+        flow.parse_table_data_document(document)
+    assert not flow.table_value_equal("bigint", "9007199254740993", "9007199254740992")
+    columns = {"hotel_id": {"name": "hotel_id", "type": "bigint"}}
+    assert flow.table_row_key(
+        {"hotel_id": "9007199254740993"}, ("hotel_id",), columns
+    ) != flow.table_row_key({"hotel_id": "9007199254740992"}, ("hotel_id",), columns)

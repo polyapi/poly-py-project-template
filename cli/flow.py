@@ -1193,6 +1193,7 @@ class CliArgs:
     hubs: bool = False
     through_sfx: bool = False
     prune_table_data: bool = False
+    force_table_data: bool = False
 
 
 class ResumeState:
@@ -1406,6 +1407,14 @@ def add_push_arguments(parser: argparse.ArgumentParser) -> None:
         help=(
             "Delete table rows that the table's data files do not list. Without "
             "it, such rows are only reported."
+        ),
+    )
+    parser.add_argument(
+        "--force-table-data",
+        action="store_true",
+        help=(
+            "Overwrite table rows changed in their table after their data file. "
+            "Without it, such rows are blocked; --force does not overwrite them."
         ),
     )
     parser.add_argument(
@@ -1886,6 +1895,7 @@ def parse_args(argv: list[str] | None = None) -> CliArgs | None:
         skip_invalid=parsed.skip_invalid,
         skip_validation_acknowledged=parsed.skip_validation is not None,
         prune_table_data=prune_table_data,
+        force_table_data=bool(getattr(parsed, "force_table_data", False)),
     )
 
 
@@ -2173,6 +2183,8 @@ def print_startup_banner(
         mode_label = "safe-sync"
     if cli_args.prune_table_data:
         mode_label += " + prune-table-data"
+    if cli_args.force_table_data:
+        mode_label += " + force-table-data"
     logger.info(f"mode: {mode_label}")
     logger.info(f"types: {', '.join(config.enabled_types)}")
     if "functions" in config.enabled_types and cli_args.function_types:
@@ -3026,7 +3038,22 @@ def parse_type_selection(
     return tuple(enabled_types), function_types
 
 
-def build_config(repo_root: Path, cli_args: CliArgs) -> DeployConfig:
+def declared_table_data_environment(env_file: EnvLoadResult | None) -> str | None:
+    """POLY_DEPLOY_TABLE_DATA_ENV as the selected env file declares it.
+
+    Like TARGET_ENV_ID, only the file counts: a shell export, CI variable or
+    other layer never picks the folder, so one environment's rows cannot reach
+    another environment's target. None when the file does not declare it.
+    """
+    if env_file is None or not env_file.exists:
+        return None
+    value = dotenv_values(env_file.resolved_path).get("POLY_DEPLOY_TABLE_DATA_ENV")
+    return None if value is None else value.strip()
+
+
+def build_config(
+    repo_root: Path, cli_args: CliArgs, env_file: EnvLoadResult | None = None
+) -> DeployConfig:
     enabled_types = cli_args.enabled_types or tuple(
         cast_artifact_types(env_csv("POLY_DEPLOY_ENABLED_TYPES", DEFAULT_ENABLED_TYPES))
     )
@@ -3044,7 +3071,7 @@ def build_config(repo_root: Path, cli_args: CliArgs) -> DeployConfig:
             (*MANDATORY_ORPHAN_EXCLUDED_CONTEXTS, *configured_orphan_excluded_contexts)
         )
     )
-    table_data_environment = os.getenv("POLY_DEPLOY_TABLE_DATA_ENV", "").strip()
+    table_data_environment = declared_table_data_environment(env_file) or ""
     if table_data_environment and not TABLE_DATA_ENVIRONMENT_NAME.fullmatch(
         table_data_environment
     ):
@@ -7001,7 +7028,8 @@ TABLE_DATA_NUMERIC_STORAGE = frozenset(
     {"numeric", "double precision", "integer", "bigint"}
 )
 TABLE_DATA_INSTANT_STORAGE = frozenset({"timestamptz", "date"})
-_TABLE_DATA_FILE_TIMES: dict[Path, float] = {}
+_TABLE_DATA_FILE_TIMES: dict[Path, float | None] = {}
+_TABLE_DATA_SHALLOW_BOUNDARIES: dict[Path, frozenset[str]] = {}
 
 
 class TableDataError(DeployError):
@@ -7252,6 +7280,21 @@ def table_data_column_problem(
     return None
 
 
+def table_data_holds_unsafe_integer(value: Any) -> bool:
+    """A whole number past 2^53, which JSON numbers cannot carry exactly."""
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return abs(value) > 2**53 - 1
+    if isinstance(value, float):
+        return value.is_integer() and abs(value) > 2**53 - 1
+    if isinstance(value, list):
+        return any(table_data_holds_unsafe_integer(item) for item in value)
+    if isinstance(value, dict):
+        return any(table_data_holds_unsafe_integer(item) for item in value.values())
+    return False
+
+
 def parse_table_data_document(
     data: Any, columns: dict[str, dict[str, Any]] | None = None
 ) -> TableDataDocument:
@@ -7296,6 +7339,20 @@ def parse_table_data_document(
                 "own key"
             )
         seen[identity] = index
+        # JSON numbers past 2^53 lose digits, in Tabi's own parser too.
+        unsafe = next(
+            (
+                column
+                for column in sorted(row)
+                if table_data_holds_unsafe_integer(row[column])
+            ),
+            None,
+        )
+        if unsafe is not None:
+            raise TableDataError(
+                f"{where} sets {unsafe!r} to a whole number beyond 2^53, which JSON "
+                "cannot carry exactly; write it as a string"
+            )
         problem = (
             table_data_column_problem(row, columns, "the table")
             if columns is not None
@@ -7361,40 +7418,69 @@ def merge_table_data_files(files: list[TableDataFile], repo_root: Path) -> Table
     )
 
 
+@dataclass
+class SelectedTableData:
+    """One table a run syncs."""
+
+    # The files this run reads: data/ and the selected environment's folder.
+    files: list[TableDataFile] = field(default_factory=list)
+    # The table's files in other environment folders. This run does not sync
+    # them, and never prunes the rows they list.
+    other_files: list[TableDataFile] = field(default_factory=list)
+
+
+@dataclass
+class TableDataSelection:
+    tables: list[SelectedTableData]
+    # Files in other environment folders whose table cannot be read. Their rows
+    # could belong to any table, so a run with them prunes nothing.
+    unreadable: list[TableDataFile]
+
+
 def select_table_data_files(
     config: DeployConfig,
     cli_args: CliArgs,
     files: list[TableDataFile],
-) -> list[list[TableDataFile]]:
+) -> TableDataSelection:
     """The data files of each table one run syncs.
 
     A run reads data/ and the selected environment's folder. A table is
     selected when one of those files matches the path filters (every table
     without filters); all of its files are then used, so a scoped run never
     mistakes the rows of another file for extra rows. Tables in excluded
-    contexts are skipped. A file whose table cannot be read stops the run's
-    table data: its rows could belong to any table.
+    contexts are skipped. A file of those folders whose table cannot be read
+    stops the run's table data: its rows could belong to any table.
     """
-    groups: dict[tuple[str, str], list[TableDataFile]] = {}
+    groups: dict[tuple[str, str], SelectedTableData] = {}
+    unreadable: list[TableDataFile] = []
     for file in files:
-        if file.environment not in ("", config.table_data_environment):
-            continue
+        read = file.environment in ("", config.table_data_environment)
         try:
             if file.error:
                 raise TableDataError(file.error)
             identity = table_data_identity(file.data)
         except TableDataError as error:
-            raise table_data_problem(file.path, config.repo_root, error) from None
+            if read:
+                raise table_data_problem(file.path, config.repo_root, error) from None
+            unreadable.append(file)
+            continue
         if context_is_orphan_excluded(identity[0], config.orphan_excluded_contexts):
             continue
-        groups.setdefault(identity, []).append(file)
-    return [
-        group
-        for group in groups.values()
-        if matches_path_filters(
-            [file.path for file in group], cli_args.path_filters, config.repo_root
-        )
-    ]
+        group = groups.setdefault(identity, SelectedTableData())
+        (group.files if read else group.other_files).append(file)
+    return TableDataSelection(
+        tables=[
+            group
+            for group in groups.values()
+            if group.files
+            and matches_path_filters(
+                [file.path for file in group.files],
+                cli_args.path_filters,
+                config.repo_root,
+            )
+        ],
+        unreadable=unreadable,
+    )
 
 
 def collect_table_data(
@@ -7406,8 +7492,8 @@ def collect_table_data(
     if files is None:
         files = find_table_data_files(config)
     return [
-        merge_table_data_files(group, config.repo_root)
-        for group in select_table_data_files(config, cli_args, files)
+        merge_table_data_files(table.files, config.repo_root)
+        for table in select_table_data_files(config, cli_args, files).tables
     ]
 
 
@@ -7551,18 +7637,32 @@ def table_value_equal(column_type: Any, local: Any, remote: Any) -> bool:
 def table_row_key(
     row: dict[str, Any], key: tuple[str, ...], columns: dict[str, dict[str, Any]]
 ) -> tuple[str, ...]:
-    """A comparable key: numbers by value, UUIDs in lower case, text as written."""
+    """A comparable key, as the table stores each key column.
+
+    Numbers by exact value, dates and timestamps as instants, UUIDs in lower
+    case, text as written.
+    """
     parts = []
     for column in key:
         value = row.get(column)
         storage = table_storage_type(columns.get(column, {}).get("type"))
         number = table_number(value) if storage in TABLE_DATA_NUMERIC_STORAGE else None
+        instant = (
+            table_instant(value) if storage in TABLE_DATA_INSTANT_STORAGE else None
+        )
         if number is not None:
             value = str(number.normalize())
+        elif instant is not None:
+            value = f"@{instant!r}"
         elif storage == "uuid" and isinstance(value, str):
             value = value.lower()
         parts.append(value if isinstance(value, str) else json.dumps(value))
     return tuple(parts)
+
+
+def table_row_has_key_values(row: dict[str, Any], key: tuple[str, ...]) -> bool:
+    """Whether a stored row's key can match a data file row at all."""
+    return all(is_table_data_key_value(row.get(column)) for column in key)
 
 
 def named_keys(labels: list[str]) -> str:
@@ -7796,28 +7896,31 @@ def plan_table_data_set(
     columns: dict[str, dict[str, Any]],
     remote_rows: list[dict[str, Any]],
     guard: bool,
-    file_timestamp: Callable[[Path], float],
+    file_timestamp: Callable[[Path], float | None],
     now: datetime,
+    keep: set[tuple[str, ...]] | None = None,
 ) -> TableDataPlan:
     """Decide what to write to one table.
 
     Insert the rows the table lacks; update the listed columns that differ,
     stamping updatedAt, which tables created before PolyAPI R24 do not stamp
     themselves; and, with the guard on, block an update when the table row
-    changed (updatedAt) at or after its newest file. Extras are the table rows
-    no file lists. Raises, before anything is written, for a key the table or
-    the files hold twice and for a new row that cannot be inserted.
+    changed (updatedAt) at or after its newest file, or when a shallow clone
+    cannot date that file. Extras are the table rows no file lists, leaving
+    out the keys of `keep`. Raises, before anything is written, for a key the
+    files hold twice, a listed key the table holds twice, and a new row that
+    cannot be inserted.
     """
     key = data_set.key
-    remote_index: dict[tuple[str, ...], dict[str, Any]] = {}
+    # A key no file can use (empty, or a duplicate nobody lists) is only an
+    # extra; a listed key held by several rows stops the table below.
+    remote_index: dict[tuple[str, ...], list[dict[str, Any]]] = {}
+    unkeyed: list[dict[str, Any]] = []
     for remote in remote_rows:
-        identity = table_row_key(remote, key, columns)
-        if identity in remote_index:
-            raise TableDataError(
-                f"several table rows have key {table_key_label(remote, key)}; remove "
-                "the duplicates first"
-            )
-        remote_index[identity] = remote
+        if not table_row_has_key_values(remote, key):
+            unkeyed.append(remote)
+            continue
+        remote_index.setdefault(table_row_key(remote, key, columns), []).append(remote)
     plan = TableDataPlan()
     listed: set[tuple[str, ...]] = set()
     for merged in data_set.rows:
@@ -7829,7 +7932,13 @@ def plan_table_data_set(
                 "match as the table stores them"
             )
         listed.add(identity)
-        remote = remote_index.get(identity)
+        matches = remote_index.get(identity, [])
+        if len(matches) > 1:
+            raise TableDataError(
+                f"several table rows have key {table_key_label(row, key)}; remove "
+                "the duplicates first"
+            )
+        remote = matches[0] if matches else None
         if remote is None:
             missing = missing_required_columns(row, columns)
             if missing:
@@ -7851,14 +7960,23 @@ def plan_table_data_set(
             plan.unchanged += 1
             continue
         remote_changed = table_instant(remote.get("updatedAt"))
-        file_changed = max(file_timestamp(path) for path in merged.paths)
-        if guard and remote_changed is not None and remote_changed >= file_changed:
-            plan.blocked.append(
-                f"{table_key_label(row, key)} (changed in the table at "
-                f"{format_table_instant(remote_changed)}; its file last changed at "
-                f"{format_table_instant(file_changed)})"
-            )
-            continue
+        if guard and remote_changed is not None:
+            times = [file_timestamp(path) for path in merged.paths]
+            if any(time is None for time in times):
+                plan.blocked.append(
+                    f"{table_key_label(row, key)} (this shallow Git clone does not "
+                    "hold its file's last change; fetch the full history, such as "
+                    "fetch-depth: 0)"
+                )
+                continue
+            file_changed = max(time for time in times if time is not None)
+            if remote_changed >= file_changed:
+                plan.blocked.append(
+                    f"{table_key_label(row, key)} (changed in the table at "
+                    f"{format_table_instant(remote_changed)}; its file last changed "
+                    f"at {format_table_instant(file_changed)})"
+                )
+                continue
         data = {column: row[column] for column in changed}
         data["updatedAt"] = (
             now.astimezone(timezone.utc)
@@ -7875,22 +7993,28 @@ def plan_table_data_set(
         )
     plan.insert_requests = plan_table_data_inserts(plan.inserts, key, columns)
     plan.extras = [
-        remote for identity, remote in remote_index.items() if identity not in listed
-    ]
+        remote
+        for identity, rows in remote_index.items()
+        if identity not in listed and identity not in (keep or set())
+        for remote in rows
+    ] + unkeyed
     return plan
 
 
-def table_data_file_timestamp(path: Path) -> float:
+def table_data_file_timestamp(path: Path) -> float | None:
     """When a data file last changed, in epoch seconds.
 
-    Its last commit time when it is committed and unmodified; otherwise (local
-    edits, untracked, no Git) its mtime. Checkouts rewrite mtimes, so the
-    commit time is what tells an old file from a new one, in CI as well.
+    The commit time of the last commit that changed it when it is committed and
+    unmodified; otherwise (local edits, untracked, no Git) its mtime. Checkouts
+    rewrite mtimes, so the commit time is what tells an old file from a new
+    one, in CI as well. It is the time the change was committed, not merged,
+    so an app edit made in between still blocks the row. None when a shallow
+    clone cuts the file's history off: its last commit is then the clone's
+    boundary, which only seems to change it.
     """
-    cached = _TABLE_DATA_FILE_TIMES.get(path)
-    if cached is not None:
-        return cached
-    timestamp = path.stat().st_mtime
+    if path in _TABLE_DATA_FILE_TIMES:
+        return _TABLE_DATA_FILE_TIMES[path]
+    timestamp: float | None = path.stat().st_mtime
 
     def git(*args: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
@@ -7905,13 +8029,32 @@ def table_data_file_timestamp(path: Path) -> float:
     try:
         status = git("status", "--porcelain", "--", path.name)
         if status.returncode == 0 and not status.stdout.strip():
-            committed = git("log", "-1", "--format=%ct", "--", path.name)
-            if committed.returncode == 0 and committed.stdout.strip().isdigit():
-                timestamp = float(committed.stdout.strip())
+            committed = git("log", "-1", "--format=%H %ct", "--", path.name)
+            commit, _, seconds = committed.stdout.strip().partition(" ")
+            if committed.returncode == 0 and commit and seconds.isdigit():
+                shallow = git("rev-parse", "--git-path", "shallow").stdout.strip()
+                timestamp = (
+                    None
+                    if shallow
+                    and commit in table_data_shallow_boundaries(path.parent / shallow)
+                    else float(seconds)
+                )
     except OSError:
         pass  # Git is not installed: the mtime stands.
     _TABLE_DATA_FILE_TIMES[path] = timestamp
     return timestamp
+
+
+def table_data_shallow_boundaries(shallow_file: Path) -> frozenset[str]:
+    """The commits a shallow clone's history stops at (none in a full clone)."""
+    shallow_file = shallow_file.resolve()
+    if shallow_file not in _TABLE_DATA_SHALLOW_BOUNDARIES:
+        try:
+            commits = frozenset(shallow_file.read_text(encoding="utf-8").split())
+        except OSError:
+            commits = frozenset()
+        _TABLE_DATA_SHALLOW_BOUNDARIES[shallow_file] = commits
+    return _TABLE_DATA_SHALLOW_BOUNDARIES[shallow_file]
 
 
 def fetch_table_rows(client: PolyApiClient, table_id: str) -> list[dict[str, Any]]:
@@ -8004,7 +8147,7 @@ def sync_table_data(
     cli_args: CliArgs,
     logger: Logger,
     summary: Summary,
-    file_timestamp: Callable[[Path], float] = table_data_file_timestamp,
+    file_timestamp: Callable[[Path], float | None] = table_data_file_timestamp,
     now: datetime | None = None,
 ) -> None:
     """Insert and update table rows from data files; delete extras on request.
@@ -8032,12 +8175,30 @@ def sync_table_data(
             f"Skipping table data folder(s) {', '.join(others)}: set "
             "POLY_DEPLOY_TABLE_DATA_ENV to this environment's folder in its env file"
         )
+    if (
+        environment
+        and others
+        and not any(file.environment == environment for file in files)
+    ):
+        logger.warn(
+            f"No data/{environment}/ folder holds table data; check "
+            "POLY_DEPLOY_TABLE_DATA_ENV in the selected env file"
+        )
     try:
-        groups = select_table_data_files(config, cli_args, files)
+        selection = select_table_data_files(config, cli_args, files)
     except DeployError as exc:
         logger.fail(str(exc))
         stats.failed += 1
         return
+    # Rows of a file that cannot be read cannot be told apart from rows no file
+    # lists, so such a file anywhere stops every prune of this run.
+    prune_refusal = (
+        f"{table_data_display(selection.unreadable[0].path, config.repo_root)} "
+        "could not be read, so its rows cannot be told apart from rows no file lists"
+        if selection.unreadable
+        else None
+    )
+    groups = selection.tables
     if not groups:
         logger.muted(
             "No table data files in scope"
@@ -8050,17 +8211,17 @@ def sync_table_data(
         for table in fetch_all_tables(client)
     }
     for group in groups:
-        context, name = table_data_identity(group[0].data)
+        context, name = table_data_identity(group.files[0].data)
         logger.item(
             table_data_label(context, name),
-            file_path=group[0].path,
+            file_path=group.files[0].path,
             repo_root=config.repo_root,
         )
         progress = TableDataProgress()
         try:
-            if any(file.path in cli_args.invalid_paths for file in group):
+            if any(file.path in cli_args.invalid_paths for file in group.files):
                 raise TableDataError("skipped: its data files failed local validation")
-            data_set = merge_table_data_files(group, config.repo_root)
+            data_set = merge_table_data_files(group.files, config.repo_root)
             for path in data_set.paths[1:]:
                 logger.detail(f"with {table_data_display(path, config.repo_root)}")
             logger.detail(
@@ -8079,6 +8240,8 @@ def sync_table_data(
                 file_timestamp=file_timestamp,
                 now=now or datetime.now(timezone.utc),
                 progress=progress,
+                other_files=group.other_files,
+                prune_refusal=prune_refusal,
             )
         except DeployError as exc:
             written = progress.inserted + progress.updated + progress.deleted
@@ -8117,6 +8280,27 @@ def check_table_data_rows(
             )
 
 
+def table_data_other_environment_keys(
+    other_files: list[TableDataFile],
+    key: tuple[str, ...],
+    columns: dict[str, dict[str, Any]],
+) -> set[tuple[str, ...]] | None:
+    """Keys that the table's other environment folders list.
+
+    A prune keeps those rows. None when one of those files cannot be read.
+    """
+    keys: set[tuple[str, ...]] = set()
+    for file in other_files:
+        try:
+            document = parse_table_data_document(file.data)
+        except TableDataError:
+            return None
+        if document.key != key:
+            return None
+        keys.update(table_row_key(row, key, columns) for row in document.rows)
+    return keys
+
+
 def sync_table_data_set(
     *,
     client: PolyApiClient,
@@ -8126,9 +8310,11 @@ def sync_table_data_set(
     stats: ArtifactStats,
     data_set: TableDataSet,
     table: dict[str, Any] | None,
-    file_timestamp: Callable[[Path], float],
+    file_timestamp: Callable[[Path], float | None],
     now: datetime,
     progress: TableDataProgress,
+    other_files: list[TableDataFile] | None = None,
+    prune_refusal: str | None = None,
 ) -> None:
     if table is None:
         if cli_args.dry_run:
@@ -8143,13 +8329,23 @@ def sync_table_data_set(
     detail = client.request("GET", f"/tables/{table['id']}", expected=(200,))
     columns = table_data_columns(detail)
     check_table_data_rows(data_set, columns)
+    # Rows another environment's folder lists are never pruned here: they are
+    # that environment's, whatever this run's POLY_DEPLOY_TABLE_DATA_ENV says.
+    keep = table_data_other_environment_keys(other_files or [], data_set.key, columns)
+    if prune_refusal is None and keep is None:
+        prune_refusal = (
+            "a data file of this table in another environment folder could not be "
+            "read, so the rows it lists are unknown"
+        )
+    prune = cli_args.prune_table_data and prune_refusal is None
     plan = plan_table_data_set(
         data_set,
         columns=columns,
         remote_rows=fetch_table_rows(client, table["id"]),
-        guard=config.use_mtime_guard and not cli_args.force,
+        guard=config.use_mtime_guard and not cli_args.force_table_data,
         file_timestamp=file_timestamp,
         now=now,
+        keep=keep,
     )
 
     verb = "Would " if cli_args.dry_run else ""
@@ -8177,13 +8373,15 @@ def sync_table_data_set(
             "different types cannot share a Tabi request"
         )
     for line in plan.blocked[:TABLE_DATA_REPORT_LIMIT]:
-        logger.blocked(f"Not updated: {line}; --force overwrites it")
+        logger.blocked(f"Not updated: {line}; --force-table-data overwrites it")
     if len(plan.blocked) > TABLE_DATA_REPORT_LIMIT:
         logger.blocked(f"{len(plan.blocked) - TABLE_DATA_REPORT_LIMIT} more")
     if plan.extras:
         labels = named_keys([table_key_label(row, key) for row in plan.extras])
-        if cli_args.prune_table_data:
+        if prune:
             logger.warn(f"{verb}delete rows no file lists: {labels}")
+        elif cli_args.prune_table_data:
+            logger.warn(f"Not pruning {labels}: {prune_refusal}")
         else:
             logger.muted(
                 f"Rows no file lists, kept: {labels} (--prune-table-data deletes "
@@ -8192,7 +8390,7 @@ def sync_table_data_set(
 
     stats.skipped += plan.unchanged
     stats.blocked += len(plan.blocked)
-    deleted = len(plan.extras) if cli_args.prune_table_data else 0
+    deleted = len(plan.extras) if prune else 0
     outcome = (
         f"{len(plan.inserts)} inserted, {len(plan.updates)} updated, {deleted} "
         f"deleted, {plan.unchanged} unchanged"
@@ -8204,14 +8402,8 @@ def sync_table_data_set(
         stats.deleted += deleted
         logger.planned(f"Plan: {outcome}")
         return
-    apply_table_data_plan(
-        client,
-        table["id"],
-        plan,
-        prune=cli_args.prune_table_data,
-        progress=progress,
-    )
-    if plan.blocked:
+    apply_table_data_plan(client, table["id"], plan, prune=prune, progress=progress)
+    if plan.blocked or (cli_args.prune_table_data and not prune and plan.extras):
         logger.warn(outcome)
     else:
         logger.ok(outcome)
@@ -11374,14 +11566,16 @@ def validate_local_namespace(
             require_owned_context(spec.context, config)
     if "table-data" in config.enabled_types:
         try:
-            groups = select_table_data_files(
+            tables = select_table_data_files(
                 config, cli_args, find_table_data_files(config)
-            )
+            ).tables
         except TableDataError:
-            groups = []  # The table data step reports a file it cannot read.
-        for group in groups:
-            if not any(file.path in cli_args.invalid_paths for file in group):
-                require_owned_context(table_data_identity(group[0].data)[0], config)
+            tables = []  # The table data step reports a file it cannot read.
+        for table in tables:
+            if not any(file.path in cli_args.invalid_paths for file in table.files):
+                require_owned_context(
+                    table_data_identity(table.files[0].data)[0], config
+                )
     patterns = {
         "variables": config.variable_globs,
         "webhooks": config.webhook_globs,
@@ -12872,7 +13066,19 @@ def run_flow(cli_args: CliArgs, report: dict[str, Any]) -> int:
     # Mandatory for every command
     target_env_id = get_target_env_id(env_file)
     cli_args = normalize_cli_path_filters(repo_root, cli_args)
-    config = build_config(repo_root, cli_args)
+    config = build_config(repo_root, cli_args, env_file)
+    inherited_table_data_environment = os.environ.get(
+        "POLY_DEPLOY_TABLE_DATA_ENV", ""
+    ).strip()
+    if (
+        inherited_table_data_environment
+        and declared_table_data_environment(env_file) is None
+    ):
+        logger.warn(
+            f"POLY_DEPLOY_TABLE_DATA_ENV={inherited_table_data_environment} is "
+            f"ignored: only the selected env file ({env_file.display_path}) picks "
+            "the table data folder."
+        )
     preflight = build_deployment_preflight(repo_root, env_file)
     if cli_args.show_config:
         print_config(config, cli_args, env_file=env_file, preflight=preflight)
