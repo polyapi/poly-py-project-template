@@ -377,6 +377,7 @@ Edit the copy with your target's values:
 | `POLY_EXEC_API_KEY` | Execution key for deployed server functions; required when production safeguards apply |
 | `TARGET_ENV_ID` | [Pin to the intended environment](#pin-the-target-environment), checked against `GET /whoami` |
 | `POLY_DEPLOY_SKIP_PATHS` | Optional [deployment exclusions](#skip-sample-deployments), relative to the project root |
+| `POLY_DEPLOY_TABLE_DATA_ENV` | Optional [table data](../cli/README.md#table-data) folder for this environment, such as `dev`; read from this file only |
 
 Flow reuses the connection saved by `python -m polyapi setup` in this project's
 Python SDK. Neither connection value needs to be in the environment file.

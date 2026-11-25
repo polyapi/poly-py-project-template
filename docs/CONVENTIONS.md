@@ -15,6 +15,7 @@ workflows/src/<workflow>/
   artefacts/
     vari/
     tabi/
+      data/          # table rows; data/<environment>/ for one environment
     schemas/
     webhooks/
     triggers/

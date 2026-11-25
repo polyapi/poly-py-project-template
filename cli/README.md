@@ -19,7 +19,8 @@ webhook-to-server-function connections, in-place subscription updates, Twilio
 token and widget references, server-function background runs and container
 concurrency, and Canopy public access. **1.5.1** rejects a local trigger
 sourced from a webhook bound to a server function, because the binding
-replaces that webhook's triggers. Its version is
+replaces that webhook's triggers. **1.6.0** adds
+[table data](#table-data). Its version is
 maintained in `cli/__init__.py`, independently of the workspace and PolyAPI SDK.
 Patch releases contain fixes, minor releases add compatible features, and
 major releases introduce breaking changes. Matching language versions do not
@@ -51,6 +52,7 @@ Run utility commands with `uv run --locked python -m cli.operations --help`.
 | `functions` | `client/*.py`, `server/*.py` | Create/update Python functions from inline `polyConfig` |
 | `variables` | `artefacts/vari/**/*.json`, `*.jsonc` | Create/update Vari; existing secret values protected by default |
 | `tables` | `artefacts/tabi/*.json` | Synchronize Tabi definitions |
+| `table-data` | `artefacts/tabi/data/*.json` and `data/<environment>/*.json` | Insert and update Tabi rows by key; see [table data](#table-data) |
 | `schemas` | `artefacts/schemas/*.json`, `*.jsonc` | Create/update named schemas |
 | `webhooks` | `artefacts/webhooks/*.json` | Create/update endpoints, security references, and direct server-function connections |
 | `triggers` | `artefacts/triggers/*.json` | Resolve webhook and server references; recreate structural changes |
@@ -62,7 +64,7 @@ Run utility commands with `uv run --locked python -m cli.operations --help`.
 
 Both `artefacts/` and legacy `artifacts/` spellings are discovered.
 
-The push order is Vari → Canopy → Tabi → schemas → Python functions →
+The push order is Vari → Canopy → Tabi → table data → schemas → Python functions →
 AI functions → MCP servers → webhooks → triggers → jobs → subscriptions. Regular `push`
 synchronizes client functions before server functions; `push-dynamic` uses
 the dependency graph to order its planned functions. Pushes selecting Python or AI functions
@@ -779,6 +781,91 @@ Access depends on `isPublic`:
   When `oauthRedirectUris` is omitted, PolyAPI adds the claude.ai and ChatGPT
   connector callbacks.
 
+## Table data
+
+Keep reference rows, such as hotel metadata or message templates, in Git and
+sync them into their Tabi table by key. The `table-data` type runs right after
+`tables`. One file lists rows of one table:
+
+```json
+{
+  "context": "example.configurations",
+  "name": "hotel_metadata",
+  "description": "Hotels the integrations serve.",
+  "key": "hotel_id",
+  "rows": [
+    { "hotel_id": "PRG1", "name": "Hotel Prague", "enabled": true },
+    { "hotel_id": "BER1", "name": "Hotel Berlin", "settings": { "floor": 2 } }
+  ]
+}
+```
+
+- Put it in the table's workflow at `artefacts/tabi/data/<file>.json`. The file
+  name does not matter: `context` and `name` say which table it fills, and a
+  table may have several files. Files in `data/` sync to every environment.
+  Files in `data/<environment>/` sync only where the selected environment file
+  sets `POLY_DEPLOY_TABLE_DATA_ENV` to that folder's name, such as `dev` or
+  `prod`. Like `TARGET_ENV_ID`, only the selected file counts: a shell export,
+  CI variable or other env layer is ignored with a warning, so one
+  environment's rows never reach another environment's target. A run warns
+  when the setting is missing but environment folders exist, or names a folder
+  that does not exist. When both folders hold a row with the same key, the
+  environment row overlays the shared one, column by column. A key listed
+  twice at one level is an error, and so is a file nested deeper than
+  `data/<environment>/`.
+- Data files are plain JSON, read as written: no comments and no
+  `{{ENV_NAME}}` substitution, so content such as templates keeps its own
+  placeholders. Use an environment folder for values that differ between
+  environments, and never put secrets in data files.
+- `key` is the column, or list of columns, that identifies a row. It cannot be
+  `id`, `createdAt` or `updatedAt`, which Tabi generates; rows cannot set them
+  either. Write whole numbers beyond 2^53, such as large `bigint` IDs, as
+  strings: JSON numbers cannot carry them exactly, so validation rejects them.
+- A row the table lacks is inserted. It must set every required column without
+  a default, and the columns it omits get their defaults. A row whose listed
+  columns differ is updated in those columns only, plus `updatedAt`, so columns
+  the file omits keep their values, such as settings edited in an app. A row
+  may therefore list just its key and the columns it changes.
+- A row changed in its table (`updatedAt`) at or after the last Git commit of
+  its file is blocked unless `--force-table-data`, so pushing an older checkout
+  does not overwrite what someone saved in an app. Plain `--force` leaves table
+  rows alone, and `POLY_DEPLOY_USE_MTIME_GUARD=false` turns the check off as
+  for other resources. A file with uncommitted changes counts by its
+  modification time, and the time is when the change was committed, not
+  merged. The check dates the whole file: once any change to a file is
+  committed, its rows no longer block for app edits made before that commit.
+  Keep rows that people edit in apps one per file. A shallow clone, such as a
+  CI checkout with `fetch-depth: 1`, may not hold a file's last change; its
+  changed rows are then blocked until the full history is fetched
+  (`fetch-depth: 0`). `--force-table-data` overwrites blocked rows, but does not
+  rewrite unchanged ones.
+- Rows that no file lists are reported and kept; `--prune-table-data` deletes
+  them. Rows that another environment folder lists are never pruned, whatever
+  this run's `POLY_DEPLOY_TABLE_DATA_ENV` is, and a run prunes nothing while a
+  data file it cannot read could list the rows. Table rows without key values,
+  such as rows a workflow wrote, count as rows no file lists. A scoped run
+  (`--paths`) selects whole tables: every file of a table with a file in
+  scope, so the rows of its other files are never pruned.
+- Values and keys compare as the column stores them: numbers by exact value,
+  timestamps and dates as instants (UTC without an offset), UUIDs ignoring
+  case, and JSON ignoring key order. A second sync of the same files changes
+  nothing. A key that several table rows hold stops the table when a file
+  lists it.
+- Local validation runs before any write and covers every environment folder
+  of the selected tables, so a broken prod file fails a dev push. It checks the
+  document, the key, duplicate keys and, when the table's definition is in the
+  project, unknown columns and nulls in required columns. Messages name files,
+  rows (by key) and columns, not other values. With `--skip-invalid`, a table
+  is skipped only where the run would read the invalid file. At sync time the
+  rows are checked against the deployed table, and a new row missing a
+  required value stops that table before anything is written to it.
+- The table must exist; a dry run plans the rows of a table the same push would
+  create. The plan names up to 10 keys per change. Inserts are sent up to 100
+  rows and 768 KB per request, updates one row per request, and deletions 100
+  rows per request. Tabi sends equal values in one request as one query
+  parameter, so Flow writes a row in several requests when one value appears in
+  columns of two types, such as `0` in an integer and a numeric column.
+
 ## Canopy
 
 Copy `designs/examples/canopy.json` into a workflow's `artefacts/canopy/`
@@ -856,6 +943,7 @@ old subscription has already been removed.
 
 Full pushes report managed orphans. `--delete-orphans` explicitly removes
 namespace-owned resources missing from the complete local artefact set.
+Table rows are not orphans; see `--prune-table-data` under [table data](#table-data).
 Scoped pushes never delete orphans. Skipped paths retain ownership.
 Canopy applications are excluded from orphan inference.
 

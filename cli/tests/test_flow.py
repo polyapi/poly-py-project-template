@@ -5757,7 +5757,9 @@ def test_main_adopt_orphans_skips_normal_sync(
         poly_deploy, "normalize_cli_path_filters", lambda _repo_root, args: args
     )
     monkeypatch.setattr(
-        poly_deploy, "build_config", lambda _repo_root, _cli_args: config
+        poly_deploy,
+        "build_config",
+        lambda _repo_root, _cli_args, _env_file=None: config,
     )
     monkeypatch.setattr(
         poly_deploy,
@@ -5888,7 +5890,9 @@ def test_main_runs_sync_steps_in_dependency_order(
         poly_deploy, "normalize_cli_path_filters", lambda _repo_root, args: args
     )
     monkeypatch.setattr(
-        poly_deploy, "build_config", lambda _repo_root, _cli_args: config
+        poly_deploy,
+        "build_config",
+        lambda _repo_root, _cli_args, _env_file=None: config,
     )
     monkeypatch.setattr(
         poly_deploy,

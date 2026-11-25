@@ -15,6 +15,7 @@ features need a platform instance that runs Release 35; refresh validators with
 review the dependency change and run `uv sync --locked` after the update.
 Flow 1.5.1 rejects a local trigger sourced from a webhook that has a
 `serverFunction` binding; see [webhook bindings](#webhook-bindings-replace-triggers).
+Flow 1.6.0 adds [table data](../cli/README.md#table-data).
 Flow's version is maintained in
 `cli/__init__.py`, separately from the workspace and PolyAPI SDK. Patch releases
 contain fixes, minor releases add compatible features, and major releases
