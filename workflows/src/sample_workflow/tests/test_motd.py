@@ -46,6 +46,7 @@ def sdk(monkeypatch):
     )
     client = AsyncMock(return_value="Advice.")
     handler = AsyncMock(return_value={"message": "Handled failure"})
+    log = AsyncMock(return_value=True)
     functions = SimpleNamespace(
         motd_client=client,
         motd_error_handler_async=handler,
@@ -55,7 +56,12 @@ def sdk(monkeypatch):
     monkeypatch.setitem(
         polyapi.__dict__,
         "poly",
-        SimpleNamespace(example=SimpleNamespace(sample_workflow=functions)),
+        SimpleNamespace(
+            example=SimpleNamespace(
+                sample_workflow=functions,
+                utilities=SimpleNamespace(log=log),
+            )
+        ),
     )
     monkeypatch.setitem(
         polyapi.__dict__,
@@ -79,6 +85,7 @@ def sdk(monkeypatch):
         advice=advice,
         client=client,
         handler=handler,
+        log=log,
     )
     polyapi.polyCustom.pop_scope(scope)
 
@@ -211,16 +218,22 @@ async def test_failure_calls_shared_server_handler_and_uses_its_response(
     )
 
 
-def test_error_handler_keeps_bounded_details_and_does_not_dump_unknown_events(
-    sdk, capsys
+async def test_error_handler_keeps_bounded_details_and_does_not_dump_unknown_events(
+    sdk,
 ):
     handler = load_source("server/motd_error_handler_sfx.py").motd_error_handler
-    assert handler(
+    expected = "motd request failed in motd_client: getRandomJoke request failed"
+    assert await handler(
         {"functionName": "motd_client", "message": "getRandomJoke request failed"}
-    ) == {"message": "motd request failed in motd_client: getRandomJoke request failed"}
-    assert "getRandomJoke request failed" in capsys.readouterr().err
-    handler({"message": "synthetic-secret", "apiKey": "synthetic-secret"})
-    assert "synthetic-secret" not in capsys.readouterr().err
+    ) == {"message": expected}
+    sdk.log.assert_awaited_once_with(
+        "warn", "motd_error_handler", expected, {"functionName": "motd_client"}
+    )
+    sdk.log.reset_mock()
+    await handler({"message": "synthetic-secret", "apiKey": "synthetic-secret"})
+    logged = sdk.log.await_args.args
+    assert logged[0] == "warn"
+    assert "synthetic-secret" not in repr(logged)
 
 
 def test_valid_request_passes_security_function(sdk):

@@ -95,6 +95,14 @@ triggers supply one error object instead; do not reuse those signatures blindly.
   runtime. The common logging helpers return booleans instead of an untyped void.
 - Do not cache OBSCURED or SECRET values. A bounded cache of NONE configuration
   such as the log level is allowed.
+- Deployed functions log through the shared `log` client function
+  (`await poly.<namespace>.utilities.log(...)`), never `print` directly. It
+  applies the Vari-controlled level and redacts known credential keys. Developer
+  scripts are not deployed and may print.
+- An error-handler trigger destination logs at `warn`, not `error`. The shared
+  logger alerts on `error` and `fatal`, and an alert raised from inside an error
+  handler re-enters the alert path. The innermost catch that names the failure
+  owns the alert.
 - Set HTTP response status through `polyCustom.responseStatusCode` when
   returning a handled webhook error.
 

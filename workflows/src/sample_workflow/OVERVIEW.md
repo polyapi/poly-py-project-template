@@ -61,8 +61,11 @@ not use a separate schema artefact or persist workflow state in Tabi tables.
 
 [The error handler](server/motd_error_handler_sfx.py) preserves only bounded
 messages and safe function names; arbitrary transport details and event bodies
-are not returned or logged. The server's handled HTTP 500 depends on that handler
-call succeeding. Its own failure remains unhandled.
+are not returned or logged. It logs through the shared `log` utility at `warn`
+rather than `error`: the handler is also an error-handler trigger destination,
+and the shared logger alerts on `error` and `fatal`, which would re-enter the
+alert path from inside the handler. The server's handled HTTP 500 depends on
+that handler call succeeding. Its own failure remains unhandled.
 
 [The error trigger](artefacts/triggers/motd_error_trigger.json) separately selects
 platform failures on the webhook path. Its delivery is distinct from the direct
